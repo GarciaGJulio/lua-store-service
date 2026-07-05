@@ -1,0 +1,405 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  CASHIER
+
+  @@map("user_role")
+}
+
+enum InvoiceStatus {
+  ISSUED
+  VOIDED          @map("CANCELLED")
+  CREDIT_PENDING
+  CREDIT_PARTIAL
+  CREDIT_PAID
+
+  @@map("invoice_status")
+}
+
+enum ReceivableStatus {
+  OPEN    @map("PENDING")
+  PARTIAL
+  PAID
+
+  @@map("receivable_status")
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  DE_UNA
+  CREDITO_MONSE
+
+  @@map("payment_method")
+}
+
+enum BarcodeSourceType {
+  EXTERNAL
+  INTERNAL_GENERATED
+
+  @@map("barcode_source_type")
+}
+
+model User {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username     String        @unique @db.VarChar(50)
+  email        String        @unique @db.VarChar(150)
+  passwordHash String        @map("password_hash")
+  fullName     String        @map("full_name") @db.VarChar(150)
+  role         UserRole
+  isActive     Boolean       @default(true) @map("is_active")
+  lastLoginAt  DateTime?     @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("users")
+}
+
+model Category {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String        @unique @db.VarChar(100)
+  description   String?
+  isActive      Boolean       @default(true) @map("is_active")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  products      Product[]
+  subcategories Subcategory[]
+
+  @@map("categories")
+}
+
+model Subcategory {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String    @db.VarChar(100)
+  description String?
+  categoryId String    @map("category_id") @db.Uuid
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  category   Category  @relation(fields: [categoryId], references: [id])
+  products   Product[]
+
+  @@unique([categoryId, name])
+  @@map("subcategories")
+}
+
+model Tax {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String    @db.VarChar(100)
+  code          String    @unique @db.VarChar(30)
+  rate          Decimal   @db.Decimal(7, 4)
+  effectiveFrom DateTime  @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  isDefault     Boolean   @default(false) @map("is_default")
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  products  Product[]
+
+  @@map("taxes")
+}
+
+model Product {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sku           String        @unique @map("internal_code") @db.VarChar(30)
+  name          String        @db.VarChar(200)
+  categoryId    String        @map("category_id") @db.Uuid
+  subcategoryId String        @map("subcategory_id") @db.Uuid
+  taxId         String        @map("tax_id") @db.Uuid
+  defaultCost   Decimal       @default(0) @map("default_cost") @db.Decimal(12, 2)
+  defaultPrice  Decimal       @default(0) @map("default_price") @db.Decimal(12, 2)
+  taxIncluded   Boolean       @default(true) @map("tax_included")
+  imageUrl      String?       @map("image_url")
+  totalStock    Int           @default(0) @map("total_stock")
+  isActive      Boolean       @default(true) @map("is_active")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  createdById   String?       @map("created_by") @db.Uuid
+  updatedById   String?       @map("updated_by") @db.Uuid
+  category      Category      @relation(fields: [categoryId], references: [id])
+  subcategory   Subcategory   @relation(fields: [subcategoryId], references: [id])
+  tax           Tax           @relation(fields: [taxId], references: [id])
+  variants      Variant[]
+  invoiceLines  InvoiceLine[]
+
+  @@map("products")
+}
+
+model Variant {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId  String        @map("product_id") @db.Uuid
+  sizeLabel  String        @map("size_label") @db.VarChar(30)
+  colorLabel String        @map("color_label") @db.VarChar(50)
+  stock      Int           @default(0)
+  cost       Decimal       @db.Decimal(12, 2)
+  price      Decimal       @db.Decimal(12, 2)
+  barcodeId  String        @unique @map("barcode_id") @db.Uuid
+  isActive   Boolean       @default(true) @map("is_active")
+  isLocked   Boolean       @default(false) @map("is_locked")
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  createdById String?      @map("created_by") @db.Uuid
+  updatedById String?      @map("updated_by") @db.Uuid
+  product    Product       @relation(fields: [productId], references: [id])
+  barcode    Barcode       @relation(fields: [barcodeId], references: [id])
+  lines      InvoiceLine[]
+
+  @@unique([productId, sizeLabel, colorLabel], map: "uq_product_variant_size_color")
+  @@map("product_variants")
+}
+
+model Barcode {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String            @unique @db.VarChar(32)
+  description String            @db.VarChar(200)
+  publicPrice Decimal           @map("public_price") @db.Decimal(12, 2)
+  sourceType  BarcodeSourceType @default(EXTERNAL) @map("source_type")
+  isActive    Boolean           @default(true) @map("is_active")
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
+  variant     Variant?
+
+  @@map("barcodes")
+}
+
+model Customer {
+  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identificationType   String       @map("identification_type") @db.VarChar(20)
+  identificationNumber String       @unique @map("identification_number") @db.VarChar(30)
+  fullName             String       @map("full_name") @db.VarChar(150)
+  address              String?      @db.VarChar(250)
+  email                String?      @db.VarChar(150)
+  phone                String?      @db.VarChar(30)
+  isActive             Boolean      @default(true) @map("is_active")
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
+  invoices             Invoice[]
+  receivables          Receivable[]
+
+  @@map("customers")
+}
+
+model DocumentSequence {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentType String   @unique @map("document_type") @db.VarChar(50)
+  prefix       String   @db.VarChar(20)
+  currentValue BigInt   @default(0) @map("current_value")
+  padding      Int      @default(8) @db.SmallInt
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("document_sequences")
+}
+
+model CashRegister {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String       @unique @db.VarChar(100)
+  isActive   Boolean      @default(true) @map("is_active")
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
+  invoices   Invoice[]
+  openings   CashOpening[]
+  expenses   CashExpense[]
+  closures   CashClosure[]
+
+  @@map("cash_registers")
+}
+
+model CashOpening {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cashRegisterId String      @map("cash_register_id") @db.Uuid
+  openingDate   DateTime     @map("opening_date") @db.Date
+  openingAmount Decimal      @map("opening_amount") @db.Decimal(12, 2)
+  openedById    String?      @map("opened_by") @db.Uuid
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  cashRegister  CashRegister @relation(fields: [cashRegisterId], references: [id])
+
+  @@unique([cashRegisterId, openingDate], map: "uq_cash_opening_by_day")
+  @@map("cash_openings")
+}
+
+model CashExpense {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cashRegisterId String      @map("cash_register_id") @db.Uuid
+  expenseDate   DateTime     @map("expense_date") @db.Date
+  detail        String       @db.VarChar(200)
+  amount        Decimal      @db.Decimal(12, 2)
+  createdById   String?      @map("created_by") @db.Uuid
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  cashRegister  CashRegister @relation(fields: [cashRegisterId], references: [id])
+
+  @@map("cash_expenses")
+}
+
+model CashClosure {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cashRegisterId   String       @map("cash_register_id") @db.Uuid
+  closureDate      DateTime     @map("closure_date") @db.Date
+  openingAmount    Decimal      @default(0) @map("opening_amount") @db.Decimal(12, 2)
+  cashSalesTotal   Decimal      @default(0) @map("cash_sales_total") @db.Decimal(12, 2)
+  nonCashSalesTotal Decimal     @default(0) @map("non_cash_sales_total") @db.Decimal(12, 2)
+  expensesTotal    Decimal      @default(0) @map("expenses_total") @db.Decimal(12, 2)
+  expectedCashTotal Decimal     @map("expected_cash_total") @db.Decimal(12, 2)
+  countedCashTotal Decimal      @map("counted_cash_total") @db.Decimal(12, 2)
+  differenceAmount Decimal      @map("difference_amount") @db.Decimal(12, 2)
+  notes            String?
+  closedById       String?      @map("closed_by") @db.Uuid
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  cashRegister     CashRegister @relation(fields: [cashRegisterId], references: [id])
+
+  @@unique([cashRegisterId, closureDate], map: "uq_cash_closure_by_day")
+  @@map("cash_closures")
+}
+
+model Invoice {
+  id                           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sequential                   String          @unique @map("invoice_number") @db.VarChar(30)
+  issuedAt                     DateTime        @default(now()) @map("issue_date") @db.Timestamptz(6)
+  customerId                   String?         @map("customer_id") @db.Uuid
+  customerNameSnapshot         String          @map("customer_name_snapshot") @db.VarChar(150)
+  customerIdentificationSnapshot String        @map("customer_identification_snapshot") @db.VarChar(30)
+  customerAddressSnapshot      String?         @map("customer_address_snapshot") @db.VarChar(250)
+  customerPhoneSnapshot        String?         @map("customer_phone_snapshot") @db.VarChar(30)
+  customerEmailSnapshot        String?         @map("customer_email_snapshot") @db.VarChar(150)
+  isFinalConsumer              Boolean         @default(true) @map("is_final_consumer")
+  subtotal                     Decimal         @db.Decimal(12, 2)
+  taxTotal                     Decimal         @map("tax_total") @db.Decimal(12, 2)
+  total                        Decimal         @db.Decimal(12, 2)
+  status                       InvoiceStatus   @default(ISSUED)
+  notes                        String?
+  cashRegisterId               String?         @map("cash_register_id") @db.Uuid
+  createdById                  String?         @map("created_by") @db.Uuid
+  createdAt                    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
+  customer                     Customer?       @relation(fields: [customerId], references: [id])
+  cashRegister                 CashRegister?   @relation(fields: [cashRegisterId], references: [id])
+  lines                        InvoiceLine[]
+  payments                     InvoicePayment[]
+  receivable                   Receivable?
+  cancellation                 InvoiceCancellation?
+
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId    String    @map("invoice_id") @db.Uuid
+  productId    String    @map("product_id") @db.Uuid
+  variantId    String    @map("variant_id") @db.Uuid
+  barcode      String    @db.VarChar(32)
+  description  String    @map("description_snapshot") @db.VarChar(200)
+  quantity     Int
+  unitPrice    Decimal   @map("unit_price") @db.Decimal(12, 2)
+  lineSubtotal Decimal   @map("line_subtotal") @db.Decimal(12, 2)
+  taxRate      Decimal   @map("tax_rate") @db.Decimal(7, 4)
+  lineTax      Decimal   @map("line_tax") @db.Decimal(12, 2)
+  lineTotal    Decimal   @map("line_total") @db.Decimal(12, 2)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  invoice      Invoice   @relation(fields: [invoiceId], references: [id])
+  product      Product   @relation(fields: [productId], references: [id])
+  variant      Variant   @relation(fields: [variantId], references: [id])
+
+  @@map("invoice_items")
+}
+
+model InvoicePayment {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId String        @map("invoice_id") @db.Uuid
+  method    PaymentMethod @map("payment_method")
+  amount    Decimal       @db.Decimal(12, 2)
+  reference String?       @db.VarChar(120)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  invoice   Invoice       @relation(fields: [invoiceId], references: [id])
+
+  @@map("invoice_payments")
+}
+
+model InvoiceCancellation {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId   String   @unique @map("invoice_id") @db.Uuid
+  cancelledAt DateTime @default(now()) @map("cancelled_at") @db.Timestamptz(6)
+  reason      String?
+  cancelledById String? @map("cancelled_by") @db.Uuid
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+
+  @@map("invoice_cancellations")
+}
+
+model Receivable {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId    String             @unique @map("invoice_id") @db.Uuid
+  customerId   String             @map("customer_id") @db.Uuid
+  originalAmount Decimal          @map("original_amount") @db.Decimal(12, 2)
+  paidAmount   Decimal            @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  balance      Decimal            @map("pending_amount") @db.Decimal(12, 2)
+  status       ReceivableStatus   @default(OPEN)
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime           @default(now()) @map("updated_at") @db.Timestamptz(6)
+  paidAt       DateTime?          @map("paid_at") @db.Timestamptz(6)
+  customer     Customer           @relation(fields: [customerId], references: [id])
+  invoice      Invoice            @relation(fields: [invoiceId], references: [id])
+  payments  ReceivablePayment[]
+
+  @@map("accounts_receivable")
+}
+
+model ReceivablePayment {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receivableId  String        @map("account_receivable_id") @db.Uuid
+  paymentNumber String        @unique @map("payment_number") @db.VarChar(30)
+  amount        Decimal       @db.Decimal(12, 2)
+  method        PaymentMethod @map("payment_method")
+  notes         String?
+  paidAt        DateTime      @default(now()) @map("paid_at") @db.Timestamptz(6)
+  createdById   String?       @map("created_by") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  receivable    Receivable    @relation(fields: [receivableId], references: [id])
+
+  @@map("receivable_payments")
+}
+
+model FileAsset {
+  id        String   @id @default(cuid())
+  module    String
+  entityId  String?
+  filename  String
+  path      String
+  mimeType  String
+  size      Int?
+  createdAt DateTime @default(now())
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  module     String   @map("module_name") @db.VarChar(60)
+  action     String   @map("action_name") @db.VarChar(60)
+  entityName String   @map("entity_name") @db.VarChar(60)
+  entityId   String?  @map("entity_id") @db.Uuid
+  actorId    String?  @map("user_id") @db.Uuid
+  metadata   Json?    @map("payload")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("audit_logs")
+}
