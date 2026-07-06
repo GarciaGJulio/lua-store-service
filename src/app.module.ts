@@ -9,9 +9,12 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CashModule } from './modules/cash/cash.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { DiscountsModule } from './modules/discounts/discounts.module';
 import { InvoicesModule } from './modules/invoices/invoices.module';
 import { ProductsModule } from './modules/products/products.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { ReceivablesModule } from './modules/receivables/receivables.module';
+import { ReturnsModule } from './modules/returns/returns.module';
 import { SubcategoriesModule } from './modules/subcategories/subcategories.module';
 import { TaxesModule } from './modules/taxes/taxes.module';
 import { UsersModule } from './modules/users/users.module';
@@ -29,11 +32,14 @@ import { UsersModule } from './modules/users/users.module';
     CategoriesModule,
     SubcategoriesModule,
     ProductsModule,
+    PaymentsModule,
     TaxesModule,
     CustomersModule,
+    DiscountsModule,
     CashModule,
     InvoicesModule,
     ReceivablesModule,
+    ReturnsModule,
     AuditModule,
   ],
   controllers: [AppController],

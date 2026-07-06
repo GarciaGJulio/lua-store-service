@@ -47,6 +47,20 @@ enum PaymentMethod {
   @@map("payment_method")
 }
 
+enum CouponScope {
+  ITEM
+  CART
+
+  @@map("coupon_scope")
+}
+
+enum CouponDiscountType {
+  AMOUNT
+  PERCENTAGE
+
+  @@map("coupon_discount_type")
+}
+
 enum BarcodeSourceType {
   EXTERNAL
   INTERNAL_GENERATED
@@ -135,6 +149,7 @@ model Product {
   tax           Tax           @relation(fields: [taxId], references: [id])
   variants      Variant[]
   invoiceLines  InvoiceLine[]
+  returns       StoreReturn[]
 
   @@map("products")
 }
@@ -157,6 +172,7 @@ model Variant {
   product    Product       @relation(fields: [productId], references: [id])
   barcode    Barcode       @relation(fields: [barcodeId], references: [id])
   lines      InvoiceLine[]
+  returns    StoreReturn[]
 
   @@unique([productId, sizeLabel, colorLabel], map: "uq_product_variant_size_color")
   @@map("product_variants")
@@ -189,6 +205,7 @@ model Customer {
   updatedAt            DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
   invoices             Invoice[]
   receivables          Receivable[]
+  returns              StoreReturn[]
 
   @@map("customers")
 }
@@ -216,6 +233,7 @@ model CashRegister {
   openings   CashOpening[]
   expenses   CashExpense[]
   closures   CashClosure[]
+  returns    StoreReturn[]
 
   @@map("cash_registers")
 }
@@ -229,7 +247,6 @@ model CashOpening {
   createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   cashRegister  CashRegister @relation(fields: [cashRegisterId], references: [id])
 
-  @@unique([cashRegisterId, openingDate], map: "uq_cash_opening_by_day")
   @@map("cash_openings")
 }
 
@@ -252,18 +269,82 @@ model CashClosure {
   closureDate      DateTime     @map("closure_date") @db.Date
   openingAmount    Decimal      @default(0) @map("opening_amount") @db.Decimal(12, 2)
   cashSalesTotal   Decimal      @default(0) @map("cash_sales_total") @db.Decimal(12, 2)
+  creditSalesTotal Decimal      @default(0) @map("credit_sales_total") @db.Decimal(12, 2)
+  receivableCollectionsTotal Decimal @default(0) @map("receivable_collections_total") @db.Decimal(12, 2)
   nonCashSalesTotal Decimal     @default(0) @map("non_cash_sales_total") @db.Decimal(12, 2)
   expensesTotal    Decimal      @default(0) @map("expenses_total") @db.Decimal(12, 2)
   expectedCashTotal Decimal     @map("expected_cash_total") @db.Decimal(12, 2)
   countedCashTotal Decimal      @map("counted_cash_total") @db.Decimal(12, 2)
+  nextDayOpeningAmount Decimal  @default(0) @map("next_day_opening_amount") @db.Decimal(12, 2)
+  dailyCollectedTotal Decimal   @default(0) @map("daily_collected_total") @db.Decimal(12, 2)
   differenceAmount Decimal      @map("difference_amount") @db.Decimal(12, 2)
   notes            String?
   closedById       String?      @map("closed_by") @db.Uuid
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   cashRegister     CashRegister @relation(fields: [cashRegisterId], references: [id])
 
-  @@unique([cashRegisterId, closureDate], map: "uq_cash_closure_by_day")
   @@map("cash_closures")
+}
+
+model StorePayment {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentDate DateTime @map("payment_date") @db.Date
+  detail      String   @db.VarChar(200)
+  amount      Decimal  @db.Decimal(12, 2)
+  createdById String?  @map("created_by") @db.Uuid
+  updatedById String?  @map("updated_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("store_payments")
+}
+
+model StoreCoupon {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String             @unique @db.VarChar(120)
+  scope         CouponScope        @map("scope")
+  discountType  CouponDiscountType @map("discount_type")
+  discountValue Decimal            @map("discount_value") @db.Decimal(12, 2)
+  validFrom     DateTime           @map("valid_from") @db.Date
+  validTo       DateTime           @map("valid_to") @db.Date
+  isActive      Boolean            @default(true) @map("is_active")
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("store_coupons")
+}
+
+model StoreReturn {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  returnDate              DateTime  @default(now()) @map("return_date") @db.Date
+  cashRegisterId          String    @map("cash_register_id") @db.Uuid
+  productId               String    @map("product_id") @db.Uuid
+  variantId               String    @map("variant_id") @db.Uuid
+  invoiceId               String?   @map("invoice_id") @db.Uuid
+  customerId              String?   @map("customer_id") @db.Uuid
+  customerNameSnapshot    String    @map("customer_name_snapshot") @db.VarChar(150)
+  invoiceSequentialSnapshot String? @map("invoice_sequential_snapshot") @db.VarChar(30)
+  productSkuSnapshot      String    @map("product_sku_snapshot") @db.VarChar(30)
+  productNameSnapshot     String    @map("product_name_snapshot") @db.VarChar(200)
+  sizeLabelSnapshot       String    @map("size_label_snapshot") @db.VarChar(30)
+  colorLabelSnapshot      String    @map("color_label_snapshot") @db.VarChar(50)
+  barcodeSnapshot         String    @map("barcode_snapshot") @db.VarChar(32)
+  quantity                Int
+  reason                  String    @db.VarChar(250)
+  returnToStock           Boolean   @default(false) @map("return_to_stock")
+  refundedUnitPrice       Decimal   @map("refunded_unit_price") @db.Decimal(12, 2)
+  refundedTotal           Decimal   @map("refunded_total") @db.Decimal(12, 2)
+  createdById             String?   @map("created_by") @db.Uuid
+  updatedById             String?   @map("updated_by") @db.Uuid
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  cashRegister            CashRegister @relation(fields: [cashRegisterId], references: [id])
+  product                 Product   @relation(fields: [productId], references: [id])
+  variant                 Variant   @relation(fields: [variantId], references: [id])
+  invoice                 Invoice?  @relation(fields: [invoiceId], references: [id])
+  customer                Customer? @relation(fields: [customerId], references: [id])
+
+  @@map("store_returns")
 }
 
 model Invoice {
@@ -292,6 +373,7 @@ model Invoice {
   payments                     InvoicePayment[]
   receivable                   Receivable?
   cancellation                 InvoiceCancellation?
+  returns                      StoreReturn[]
 
   @@map("invoices")
 }
