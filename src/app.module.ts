@@ -4,6 +4,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { validateEnvironment } from './config/env.validation';
 import { PrismaModule } from './database/prisma.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CashModule } from './modules/cash/cash.module';
@@ -27,6 +28,7 @@ import { UsersModule } from './modules/users/users.module';
       validate: validateEnvironment,
     }),
     PrismaModule,
+    AnalyticsModule,
     AuthModule,
     UsersModule,
     CategoriesModule,

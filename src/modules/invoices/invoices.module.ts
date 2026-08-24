@@ -145,6 +145,30 @@ type SequencedDocument = {
   prefix: string;
 };
 
+type InvoiceDiscountContext = {
+  cartCoupon: {
+    id: string;
+    name: string;
+    discountType: CouponDiscountType;
+    discountValue: number;
+    appliedAmount: number;
+  } | null;
+  linesByVariantId: Map<
+    string,
+    {
+      itemDiscount: number;
+      cartDiscount: number;
+      itemCoupon: {
+        id: string;
+        name: string;
+        discountType: CouponDiscountType;
+        discountValue: number;
+      } | null;
+    }
+  >;
+  totalDiscount: number;
+};
+
 @Injectable()
 class InvoicesService {
   constructor(
@@ -226,13 +250,19 @@ class InvoicesService {
     }
 
     const returnedQuantities = await this.getReturnedQuantities(invoice.id);
-    return this.mapInvoiceDetail(invoice, returnedQuantities);
+    const discountContext = await this.getInvoiceDiscountContext(invoice.id);
+    return this.mapInvoiceDetail(invoice, returnedQuantities, discountContext);
   }
 
   async voidSaleById(invoiceId: string, dto: VoidInvoiceDto) {
     const invoice = await this.voidInvoice(invoiceId, dto);
     const returnedQuantities = await this.getReturnedQuantities(invoice.id);
-    return this.mapInvoiceDetail(invoice as InvoiceDetailsRecord, returnedQuantities);
+    const discountContext = await this.getInvoiceDiscountContext(invoice.id);
+    return this.mapInvoiceDetail(
+      invoice as InvoiceDetailsRecord,
+      returnedQuantities,
+      discountContext,
+    );
   }
 
   async create(dto: CreateInvoiceDto) {
@@ -724,9 +754,163 @@ class InvoicesService {
     );
   }
 
+  private async getInvoiceDiscountContext(invoiceId: string): Promise<InvoiceDiscountContext> {
+    const auditLog = await this.prisma.auditLog.findFirst({
+      where: {
+        action: 'create',
+        entityId: invoiceId,
+        entityName: 'invoice',
+        module: 'invoices',
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      select: {
+        metadata: true,
+      },
+    });
+
+    const metadata =
+      auditLog?.metadata && typeof auditLog.metadata === 'object' && !Array.isArray(auditLog.metadata)
+        ? (auditLog.metadata as Record<string, unknown>)
+        : null;
+
+    const cartCouponId =
+      typeof metadata?.cartCouponId === 'string' && metadata.cartCouponId.trim().length > 0
+        ? metadata.cartCouponId
+        : null;
+
+    const rawLineDiscounts = Array.isArray(metadata?.lineDiscounts)
+      ? metadata.lineDiscounts
+      : [];
+
+    const parsedLineDiscounts = rawLineDiscounts
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          return null;
+        }
+
+        const row = entry as Record<string, unknown>;
+        const variantId = typeof row.variantId === 'string' ? row.variantId : null;
+
+        if (!variantId) {
+          return null;
+        }
+
+        return {
+          cartDiscount:
+            typeof row.cartDiscount === 'number' ? row.cartDiscount : Number(row.cartDiscount ?? 0),
+          itemCouponId:
+            typeof row.itemCouponId === 'string' && row.itemCouponId.trim().length > 0
+              ? row.itemCouponId
+              : null,
+          itemDiscount:
+            typeof row.itemDiscount === 'number' ? row.itemDiscount : Number(row.itemDiscount ?? 0),
+          variantId,
+        };
+      })
+      .filter(
+        (
+          entry,
+        ): entry is {
+          variantId: string;
+          itemCouponId: string | null;
+          itemDiscount: number;
+          cartDiscount: number;
+        } => Boolean(entry),
+      );
+
+    const couponIds = [
+      ...new Set(
+        parsedLineDiscounts
+          .map((entry) => entry.itemCouponId)
+          .concat(cartCouponId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
+
+    const coupons = couponIds.length
+      ? await this.prisma.storeCoupon.findMany({
+          where: {
+            id: {
+              in: couponIds,
+            },
+          },
+          select: {
+            discountType: true,
+            discountValue: true,
+            id: true,
+            name: true,
+          },
+        })
+      : [];
+
+    const couponsById = new Map(
+      coupons.map((coupon) => [
+        coupon.id,
+        {
+          ...coupon,
+          discountValue: Number(coupon.discountValue),
+        },
+      ]),
+    );
+
+    const linesByVariantId = new Map<
+      string,
+      {
+        itemDiscount: number;
+        cartDiscount: number;
+        itemCoupon: {
+          id: string;
+          name: string;
+          discountType: CouponDiscountType;
+          discountValue: number;
+        } | null;
+      }
+    >();
+
+    let totalDiscount = 0;
+    let totalCartDiscount = 0;
+
+    for (const entry of parsedLineDiscounts) {
+      const itemDiscount = Number(Math.max(0, entry.itemDiscount).toFixed(2));
+      const cartDiscount = Number(Math.max(0, entry.cartDiscount).toFixed(2));
+
+      totalDiscount += itemDiscount + cartDiscount;
+      totalCartDiscount += cartDiscount;
+
+      linesByVariantId.set(entry.variantId, {
+        cartDiscount,
+        itemCoupon: entry.itemCouponId ? couponsById.get(entry.itemCouponId) ?? null : null,
+        itemDiscount,
+      });
+    }
+
+    return {
+      cartCoupon: cartCouponId
+        ? {
+            ...(couponsById.get(cartCouponId) ?? {
+              id: cartCouponId,
+              name: 'Cupon de carrito',
+              discountType: CouponDiscountType.AMOUNT,
+              discountValue: totalCartDiscount,
+            }),
+            appliedAmount: Number(totalCartDiscount.toFixed(2)),
+          }
+        : null,
+      linesByVariantId,
+      totalDiscount: Number(totalDiscount.toFixed(2)),
+    };
+  }
+
   private mapInvoiceDetail(
     invoice: InvoiceDetailsRecord,
     returnedQuantities = new Map<string, number>(),
+    discountContext: InvoiceDiscountContext = {
+      cartCoupon: null,
+      linesByVariantId: new Map(),
+      totalDiscount: 0,
+    },
   ) {
     const receivablePaymentsCount = invoice.receivable?.payments.length ?? 0;
     const canVoid =
@@ -757,10 +941,14 @@ class InvoicesService {
       },
       id: invoice.id,
       issuedAt: invoice.issuedAt,
+      cartCoupon: discountContext.cartCoupon,
       lines: invoice.lines.map((line) => ({
         barcode: line.barcode,
+        cartDiscount: discountContext.linesByVariantId.get(line.variantId)?.cartDiscount ?? 0,
         colorLabel: line.variant.colorLabel,
         description: line.description,
+        itemCoupon: discountContext.linesByVariantId.get(line.variantId)?.itemCoupon ?? null,
+        itemDiscount: discountContext.linesByVariantId.get(line.variantId)?.itemDiscount ?? 0,
         lineSubtotal: Number(line.lineSubtotal),
         lineTax: Number(line.lineTax),
         lineTotal: Number(line.lineTotal),
@@ -796,6 +984,7 @@ class InvoicesService {
       subtotal: Number(invoice.subtotal),
       taxTotal: Number(invoice.taxTotal),
       total: Number(invoice.total),
+      totalDiscount: discountContext.totalDiscount,
       voidBlockedReason,
     };
   }

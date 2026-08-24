@@ -244,9 +244,9 @@ export class CashService {
       const state = this.computeRegisterState(register);
       const session = this.getLatestSessionWindow(register);
 
-      if (!state.isOpenToday || !state.pendingOpeningDate || !session?.isActive) {
+      if (!state.hasPendingClosure || !state.pendingOpeningDate || !session?.isActive) {
         throw new BadRequestException(
-          'Debes tener una caja abierta hoy para registrar egresos.',
+          'Debes tener un turno de caja pendiente de cierre para registrar egresos.',
         );
       }
 
