@@ -25,6 +25,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { randomInt } from 'crypto';
 import { PrismaService } from '@/database/prisma.service';
 
 class CreateProductVariantDto {
@@ -172,6 +173,25 @@ class FindInventoryProductsQueryDto {
   @Min(1)
   @Max(100)
   limit?: number = 10;
+}
+
+class GenerateProductCodesDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  categoryName!: string;
+
+  @IsString()
+  subcategoryName!: string;
+
+  @IsInt()
+  @Min(0)
+  variantCount!: number;
+
+  @IsOptional()
+  @IsString()
+  existingSku?: string;
 }
 
 const productDetailsInclude = {
@@ -335,6 +355,13 @@ class ProductsService {
 
     const sku = dto.sku.trim();
     const name = dto.name.trim();
+
+    if (sku !== existingProduct.sku) {
+      throw new BadRequestException(
+        'El SKU de un producto ya registrado no puede modificarse.',
+      );
+    }
+
     const normalizedVariants = this.normalizeUpdateVariants(dto.variants, existingProduct);
 
     this.validateVariants(normalizedVariants);
@@ -461,6 +488,34 @@ class ProductsService {
     }
   }
 
+  async generateCodes(dto: GenerateProductCodesDto) {
+    const productName = dto.name.trim();
+    const categoryName = dto.categoryName.trim();
+    const subcategoryName = dto.subcategoryName.trim();
+
+    if (!productName) {
+      throw new BadRequestException(
+        'Ingresa el nombre del producto antes de generar los codigos.',
+      );
+    }
+
+    if (!categoryName || !subcategoryName) {
+      throw new BadRequestException(
+        'Selecciona categoria y subcategoria antes de generar los codigos.',
+      );
+    }
+
+    const sku =
+      dto.existingSku?.trim() ||
+      (await this.generateUniqueSku(categoryName, subcategoryName, productName));
+    const barcodes = await this.generateRandomBarcodes(dto.variantCount);
+
+    return {
+      barcodes,
+      sku,
+    };
+  }
+
   private buildInventoryWhere(
     query: FindInventoryProductsQueryDto,
   ): Prisma.ProductWhereInput {
@@ -536,6 +591,12 @@ class ProductsService {
           );
         }
 
+        if (barcode !== existingVariant.barcode.code) {
+          throw new BadRequestException(
+            'El codigo de barras de una variante ya registrada no puede modificarse.',
+          );
+        }
+
         return {
           barcode,
           colorLabel,
@@ -594,6 +655,104 @@ class ProductsService {
     };
   }
 
+  private async generateUniqueSku(
+    categoryName: string,
+    subcategoryName: string,
+    productName: string,
+  ) {
+    const prefix = this.buildSkuPrefix(categoryName, subcategoryName, productName);
+    const matchingProducts = await this.prisma.product.findMany({
+      select: {
+        sku: true,
+      },
+      where: {
+        sku: {
+          startsWith: `${prefix}-`,
+          mode: 'insensitive',
+        },
+      },
+    });
+
+    let maxSequence = 0;
+
+    for (const product of matchingProducts) {
+      const suffix = product.sku.split('-').pop() ?? '';
+      const parsed = Number(suffix);
+
+      if (!Number.isNaN(parsed)) {
+        maxSequence = Math.max(maxSequence, parsed);
+      }
+    }
+
+    return `${prefix}${String(maxSequence + 1).padStart(4, '0')}`;
+  }
+
+  private buildSkuPrefix(
+    categoryName: string,
+    subcategoryName: string,
+    productName: string,
+  ) {
+    const categoryPrefix = this.buildCodeToken(categoryName, 'CAT');
+    const subcategoryPrefix = this.buildCodeToken(subcategoryName, 'SUB');
+    const productPrefix = this.buildCodeToken(productName, 'PRD');
+
+    return `${categoryPrefix}-${subcategoryPrefix}-${productPrefix}`;
+  }
+
+  private async generateRandomBarcodes(quantity: number) {
+    const generated = new Set<string>();
+
+    while (generated.size < quantity) {
+      const candidate = this.buildRandomBarcode13();
+
+      if (generated.has(candidate)) {
+        continue;
+      }
+
+      const exists = await this.prisma.barcode.findUnique({
+        select: { id: true },
+        where: { code: candidate },
+      });
+
+      if (!exists) {
+        generated.add(candidate);
+      }
+    }
+
+    return Array.from(generated);
+  }
+
+  private buildRandomBarcode13() {
+    const prefix = '10010';
+    let suffix = '';
+
+    for (let index = 0; index < 8; index += 1) {
+      suffix += String(randomInt(0, 10));
+    }
+
+    return `${prefix}${suffix}`;
+  }
+
+  private normalizeCodeText(value: string) {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9]+/g, ' ')
+      .trim()
+      .toUpperCase();
+  }
+
+  private buildCodeToken(value: string, fallback: string) {
+    const normalized = this.normalizeCodeText(value).replace(/\s+/g, '');
+    const trimmed = normalized.slice(0, 3);
+
+    if (!trimmed) {
+      return fallback;
+    }
+
+    return trimmed.padEnd(3, 'X');
+  }
+
   private getUniqueConstraintMessage(
     error: Prisma.PrismaClientKnownRequestError,
     sku: string,
@@ -638,6 +797,24 @@ class ProductsService {
         );
       }
 
+      if (!/^[A-Za-z0-9]{1,4}$/.test(variant.sizeLabel)) {
+        throw new BadRequestException(
+          `${variantLabel}: la talla solo puede contener letras o numeros y maximo 4 caracteres.`,
+        );
+      }
+
+      if (!/^[\p{L}\s]+$/u.test(variant.colorLabel)) {
+        throw new BadRequestException(
+          `${variantLabel}: el color solo puede contener letras y espacios.`,
+        );
+      }
+
+      if (!this.hasAtMostTwoDecimals(variant.cost) || !this.hasAtMostTwoDecimals(variant.price)) {
+        throw new BadRequestException(
+          `${variantLabel}: costo y precio solo admiten hasta dos decimales.`,
+        );
+      }
+
       if (variant.stock < 0 || variant.cost < 0 || variant.price < 0) {
         throw new BadRequestException(
           `${variantLabel}: stock, costo y precio deben ser valores iguales o mayores a cero.`,
@@ -662,6 +839,10 @@ class ProductsService {
       usedBarcodes.add(normalizedBarcode);
     }
   }
+
+  private hasAtMostTwoDecimals(value: number) {
+    return Number.isInteger(value * 100);
+  }
 }
 
 @Controller('products')
@@ -676,6 +857,11 @@ class ProductsController {
   @Get('inventory')
   findInventoryPage(@Query() query: FindInventoryProductsQueryDto) {
     return this.productsService.findInventoryPage(query);
+  }
+
+  @Post('generate-codes')
+  generateCodes(@Body() dto: GenerateProductCodesDto) {
+    return this.productsService.generateCodes(dto);
   }
 
   @Post()
