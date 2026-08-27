@@ -797,9 +797,9 @@ class ProductsService {
         );
       }
 
-      if (!/^[A-Za-z0-9]{1,4}$/.test(variant.sizeLabel)) {
+      if (!/^[A-Za-z0-9]{1,30}$/.test(variant.sizeLabel)) {
         throw new BadRequestException(
-          `${variantLabel}: la talla solo puede contener letras o numeros y maximo 4 caracteres.`,
+          `${variantLabel}: la talla solo puede contener letras o numeros y maximo 30 caracteres.`,
         );
       }
 
