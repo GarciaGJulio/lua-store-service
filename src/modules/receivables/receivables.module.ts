@@ -9,8 +9,21 @@ import {
   Post,
   StreamableFile,
 } from '@nestjs/common';
-import { InvoiceStatus, PaymentMethod, Prisma, ReceivableStatus } from '@prisma/client';
-import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  InvoiceStatus,
+  PaymentMethod,
+  Prisma,
+  ReceivableStatus,
+} from '@prisma/client';
+import {
+  IsDateString,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 import { PrismaService } from '@/database/prisma.service';
 import { ReceiptPdfService } from './receipt-pdf.service';
 
@@ -25,6 +38,18 @@ class CreateReceivablePaymentDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+class CreateInitialDebtDto {
+  @IsUUID()
+  customerId!: string;
+
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+
+  @IsDateString()
+  lastPaymentAt!: string;
 }
 
 const receivableDetailsInclude = {
@@ -52,9 +77,58 @@ class ReceivablesService {
     });
   }
 
+  async createInitialDebt(dto: CreateInitialDebtDto) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: dto.customerId, isActive: true },
+    });
+
+    if (!customer) {
+      throw new BadRequestException(
+        'El cliente seleccionado no existe o esta inactivo.',
+      );
+    }
+
+    const lastPaymentAt = new Date(dto.lastPaymentAt);
+    if (Number.isNaN(lastPaymentAt.getTime())) {
+      throw new BadRequestException('La fecha de ultimo abono no es valida.');
+    }
+
+    return this.prisma.$transaction(async (transaction) => {
+      const receivable = await transaction.receivable.create({
+        data: {
+          balance: dto.amount,
+          customerId: customer.id,
+          isInitialDebt: true,
+          lastPaymentAt,
+          originalAmount: dto.amount,
+          paidAmount: 0,
+        },
+        include: receivableDetailsInclude,
+      });
+
+      await transaction.auditLog.create({
+        data: {
+          action: 'create_initial_debt',
+          entityName: 'receivable',
+          entityId: receivable.id,
+          metadata: {
+            amount: dto.amount,
+            customerId: customer.id,
+            lastPaymentAt,
+          },
+          module: 'receivables',
+        },
+      });
+
+      return receivable;
+    });
+  }
+
   async recordPayment(receivableId: string, dto: CreateReceivablePaymentDto) {
     if (dto.method === PaymentMethod.CREDITO_MONSE) {
-      throw new BadRequestException('Credito Monse no es un metodo valido para registrar abonos.');
+      throw new BadRequestException(
+        'Credito Monse no es un metodo valido para registrar abonos.',
+      );
     }
 
     return this.prisma.$transaction(async (transaction) => {
@@ -75,7 +149,9 @@ class ReceivablesService {
       }
 
       if (dto.amount > Number(receivable.balance)) {
-        throw new BadRequestException('El abono no puede superar el saldo pendiente.');
+        throw new BadRequestException(
+          'El abono no puede superar el saldo pendiente.',
+        );
       }
 
       const paymentNumber = await this.getNextDocumentNumber(
@@ -93,22 +169,27 @@ class ReceivablesService {
         },
       });
 
+      await transaction.receivable.update({
+        where: { id: receivableId },
+        data: { lastPaymentAt: payment.paidAt },
+      });
+
       const updatedReceivable = await transaction.receivable.findUniqueOrThrow({
         where: { id: receivableId },
         include: receivableDetailsInclude,
       });
 
-      const nextInvoiceStatus =
-        updatedReceivable.status === ReceivableStatus.PAID
-          ? InvoiceStatus.CREDIT_PAID
-          : InvoiceStatus.CREDIT_PARTIAL;
+      if (updatedReceivable.invoiceId) {
+        const nextInvoiceStatus =
+          updatedReceivable.status === ReceivableStatus.PAID
+            ? InvoiceStatus.CREDIT_PAID
+            : InvoiceStatus.CREDIT_PARTIAL;
 
-      await transaction.invoice.update({
-        where: { id: updatedReceivable.invoiceId },
-        data: {
-          status: nextInvoiceStatus,
-        },
-      });
+        await transaction.invoice.update({
+          where: { id: updatedReceivable.invoiceId },
+          data: { status: nextInvoiceStatus },
+        });
+      }
 
       await transaction.auditLog.create({
         data: {
@@ -135,7 +216,9 @@ class ReceivablesService {
     transaction: Prisma.TransactionClient,
     documentType: string,
   ) {
-    const sequenceRows = await transaction.$queryRaw<Array<SequencedDocument>>(Prisma.sql`
+    const sequenceRows = await transaction.$queryRaw<
+      Array<SequencedDocument>
+    >(Prisma.sql`
       UPDATE public.document_sequences
          SET current_value = current_value + 1,
              updated_at = NOW()
@@ -171,8 +254,16 @@ class ReceivablesController {
     return this.receivablesService.findAll();
   }
 
+  @Post('initial-debts')
+  createInitialDebt(@Body() dto: CreateInitialDebtDto) {
+    return this.receivablesService.createInitialDebt(dto);
+  }
+
   @Post(':id/payments')
-  recordPayment(@Param('id') id: string, @Body() dto: CreateReceivablePaymentDto) {
+  recordPayment(
+    @Param('id') id: string,
+    @Body() dto: CreateReceivablePaymentDto,
+  ) {
     return this.receivablesService.recordPayment(id, dto);
   }
 

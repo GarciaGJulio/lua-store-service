@@ -52,7 +52,7 @@ export class ReceiptPdfService {
               <div class="box">
                 <h1>Comprobante de abono</h1>
                 <p>Cliente: ${payment.receivable.customer.fullName}</p>
-                <p>Factura: ${payment.receivable.invoice.sequential}</p>
+                <p>${payment.receivable.invoice ? `Factura: ${payment.receivable.invoice.sequential}` : 'Origen: Deuda inicial'}</p>
                 <p>Comprobante: ${payment.paymentNumber}</p>
                 <p>Monto abonado: $${payment.amount.toFixed(2)}</p>
                 <p>Metodo: ${payment.method}</p>

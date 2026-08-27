@@ -22,7 +22,7 @@ enum UserRole {
 
 enum InvoiceStatus {
   ISSUED
-  VOIDED          @map("CANCELLED")
+  VOIDED         @map("CANCELLED")
   CREDIT_PENDING
   CREDIT_PARTIAL
   CREDIT_PAID
@@ -69,16 +69,16 @@ enum BarcodeSourceType {
 }
 
 model User {
-  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  username     String        @unique @db.VarChar(50)
-  email        String        @unique @db.VarChar(150)
-  passwordHash String        @map("password_hash")
-  fullName     String        @map("full_name") @db.VarChar(150)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username     String    @unique @db.VarChar(50)
+  email        String    @unique @db.VarChar(150)
+  passwordHash String    @map("password_hash")
+  fullName     String    @map("full_name") @db.VarChar(150)
   role         UserRole
-  isActive     Boolean       @default(true) @map("is_active")
-  lastLoginAt  DateTime?     @map("last_login_at") @db.Timestamptz(6)
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("users")
 }
@@ -97,15 +97,15 @@ model Category {
 }
 
 model Subcategory {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name       String    @db.VarChar(100)
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @db.VarChar(100)
   description String?
-  categoryId String    @map("category_id") @db.Uuid
-  isActive   Boolean   @default(true) @map("is_active")
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
-  category   Category  @relation(fields: [categoryId], references: [id])
-  products   Product[]
+  categoryId  String    @map("category_id") @db.Uuid
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  category    Category  @relation(fields: [categoryId], references: [id])
+  products    Product[]
 
   @@unique([categoryId, name])
   @@map("subcategories")
@@ -122,7 +122,7 @@ model Tax {
   isActive      Boolean   @default(true) @map("is_active")
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
-  products  Product[]
+  products      Product[]
 
   @@map("taxes")
 }
@@ -155,24 +155,24 @@ model Product {
 }
 
 model Variant {
-  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  productId  String        @map("product_id") @db.Uuid
-  sizeLabel  String        @map("size_label") @db.VarChar(30)
-  colorLabel String        @map("color_label") @db.VarChar(50)
-  stock      Int           @default(0)
-  cost       Decimal       @db.Decimal(12, 2)
-  price      Decimal       @db.Decimal(12, 2)
-  barcodeId  String        @unique @map("barcode_id") @db.Uuid
-  isActive   Boolean       @default(true) @map("is_active")
-  isLocked   Boolean       @default(false) @map("is_locked")
-  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt  DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
-  createdById String?      @map("created_by") @db.Uuid
-  updatedById String?      @map("updated_by") @db.Uuid
-  product    Product       @relation(fields: [productId], references: [id])
-  barcode    Barcode       @relation(fields: [barcodeId], references: [id])
-  lines      InvoiceLine[]
-  returns    StoreReturn[]
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId   String        @map("product_id") @db.Uuid
+  sizeLabel   String        @map("size_label") @db.VarChar(30)
+  colorLabel  String        @map("color_label") @db.VarChar(50)
+  stock       Int           @default(0)
+  cost        Decimal       @db.Decimal(12, 2)
+  price       Decimal       @db.Decimal(12, 2)
+  barcodeId   String        @unique @map("barcode_id") @db.Uuid
+  isActive    Boolean       @default(true) @map("is_active")
+  isLocked    Boolean       @default(false) @map("is_locked")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  createdById String?       @map("created_by") @db.Uuid
+  updatedById String?       @map("updated_by") @db.Uuid
+  product     Product       @relation(fields: [productId], references: [id])
+  barcode     Barcode       @relation(fields: [barcodeId], references: [id])
+  lines       InvoiceLine[]
+  returns     StoreReturn[]
 
   @@unique([productId, sizeLabel, colorLabel], map: "uq_product_variant_size_color")
   @@map("product_variants")
@@ -193,16 +193,16 @@ model Barcode {
 }
 
 model Customer {
-  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  identificationType   String       @map("identification_type") @db.VarChar(20)
-  identificationNumber String       @unique @map("identification_number") @db.VarChar(30)
-  fullName             String       @map("full_name") @db.VarChar(150)
-  address              String?      @db.VarChar(250)
-  email                String?      @db.VarChar(150)
-  phone                String?      @db.VarChar(30)
-  isActive             Boolean      @default(true) @map("is_active")
-  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
+  id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identificationType   String        @map("identification_type") @db.VarChar(20)
+  identificationNumber String        @unique @map("identification_number") @db.VarChar(30)
+  fullName             String        @map("full_name") @db.VarChar(150)
+  address              String?       @db.VarChar(250)
+  email                String?       @db.VarChar(150)
+  phone                String?       @db.VarChar(30)
+  isActive             Boolean       @default(true) @map("is_active")
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
   invoices             Invoice[]
   receivables          Receivable[]
   returns              StoreReturn[]
@@ -224,64 +224,64 @@ model DocumentSequence {
 }
 
 model CashRegister {
-  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name       String       @unique @db.VarChar(100)
-  isActive   Boolean      @default(true) @map("is_active")
-  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt  DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
-  invoices   Invoice[]
-  openings   CashOpening[]
-  expenses   CashExpense[]
-  closures   CashClosure[]
-  returns    StoreReturn[]
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String        @unique @db.VarChar(100)
+  isActive  Boolean       @default(true) @map("is_active")
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  invoices  Invoice[]
+  openings  CashOpening[]
+  expenses  CashExpense[]
+  closures  CashClosure[]
+  returns   StoreReturn[]
 
   @@map("cash_registers")
 }
 
 model CashOpening {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  cashRegisterId String      @map("cash_register_id") @db.Uuid
-  openingDate   DateTime     @map("opening_date") @db.Date
-  openingAmount Decimal      @map("opening_amount") @db.Decimal(12, 2)
-  openedById    String?      @map("opened_by") @db.Uuid
-  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  cashRegister  CashRegister @relation(fields: [cashRegisterId], references: [id])
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cashRegisterId String       @map("cash_register_id") @db.Uuid
+  openingDate    DateTime     @map("opening_date") @db.Date
+  openingAmount  Decimal      @map("opening_amount") @db.Decimal(12, 2)
+  openedById     String?      @map("opened_by") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  cashRegister   CashRegister @relation(fields: [cashRegisterId], references: [id])
 
   @@map("cash_openings")
 }
 
 model CashExpense {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  cashRegisterId String      @map("cash_register_id") @db.Uuid
-  expenseDate   DateTime     @map("expense_date") @db.Date
-  detail        String       @db.VarChar(200)
-  amount        Decimal      @db.Decimal(12, 2)
-  createdById   String?      @map("created_by") @db.Uuid
-  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  cashRegister  CashRegister @relation(fields: [cashRegisterId], references: [id])
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cashRegisterId String       @map("cash_register_id") @db.Uuid
+  expenseDate    DateTime     @map("expense_date") @db.Date
+  detail         String       @db.VarChar(200)
+  amount         Decimal      @db.Decimal(12, 2)
+  createdById    String?      @map("created_by") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  cashRegister   CashRegister @relation(fields: [cashRegisterId], references: [id])
 
   @@map("cash_expenses")
 }
 
 model CashClosure {
-  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  cashRegisterId   String       @map("cash_register_id") @db.Uuid
-  closureDate      DateTime     @map("closure_date") @db.Date
-  openingAmount    Decimal      @default(0) @map("opening_amount") @db.Decimal(12, 2)
-  cashSalesTotal   Decimal      @default(0) @map("cash_sales_total") @db.Decimal(12, 2)
-  creditSalesTotal Decimal      @default(0) @map("credit_sales_total") @db.Decimal(12, 2)
-  receivableCollectionsTotal Decimal @default(0) @map("receivable_collections_total") @db.Decimal(12, 2)
-  nonCashSalesTotal Decimal     @default(0) @map("non_cash_sales_total") @db.Decimal(12, 2)
-  expensesTotal    Decimal      @default(0) @map("expenses_total") @db.Decimal(12, 2)
-  expectedCashTotal Decimal     @map("expected_cash_total") @db.Decimal(12, 2)
-  countedCashTotal Decimal      @map("counted_cash_total") @db.Decimal(12, 2)
-  nextDayOpeningAmount Decimal  @default(0) @map("next_day_opening_amount") @db.Decimal(12, 2)
-  dailyCollectedTotal Decimal   @default(0) @map("daily_collected_total") @db.Decimal(12, 2)
-  differenceAmount Decimal      @map("difference_amount") @db.Decimal(12, 2)
-  notes            String?
-  closedById       String?      @map("closed_by") @db.Uuid
-  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  cashRegister     CashRegister @relation(fields: [cashRegisterId], references: [id])
+  id                         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cashRegisterId             String       @map("cash_register_id") @db.Uuid
+  closureDate                DateTime     @map("closure_date") @db.Date
+  openingAmount              Decimal      @default(0) @map("opening_amount") @db.Decimal(12, 2)
+  cashSalesTotal             Decimal      @default(0) @map("cash_sales_total") @db.Decimal(12, 2)
+  creditSalesTotal           Decimal      @default(0) @map("credit_sales_total") @db.Decimal(12, 2)
+  receivableCollectionsTotal Decimal      @default(0) @map("receivable_collections_total") @db.Decimal(12, 2)
+  nonCashSalesTotal          Decimal      @default(0) @map("non_cash_sales_total") @db.Decimal(12, 2)
+  expensesTotal              Decimal      @default(0) @map("expenses_total") @db.Decimal(12, 2)
+  expectedCashTotal          Decimal      @map("expected_cash_total") @db.Decimal(12, 2)
+  countedCashTotal           Decimal      @map("counted_cash_total") @db.Decimal(12, 2)
+  nextDayOpeningAmount       Decimal      @default(0) @map("next_day_opening_amount") @db.Decimal(12, 2)
+  dailyCollectedTotal        Decimal      @default(0) @map("daily_collected_total") @db.Decimal(12, 2)
+  differenceAmount           Decimal      @map("difference_amount") @db.Decimal(12, 2)
+  notes                      String?
+  closedById                 String?      @map("closed_by") @db.Uuid
+  createdAt                  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  cashRegister               CashRegister @relation(fields: [cashRegisterId], references: [id])
 
   @@map("cash_closures")
 }
@@ -315,86 +315,86 @@ model StoreCoupon {
 }
 
 model StoreReturn {
-  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  returnDate              DateTime  @default(now()) @map("return_date") @db.Date
-  cashRegisterId          String    @map("cash_register_id") @db.Uuid
-  productId               String    @map("product_id") @db.Uuid
-  variantId               String    @map("variant_id") @db.Uuid
-  invoiceId               String?   @map("invoice_id") @db.Uuid
-  customerId              String?   @map("customer_id") @db.Uuid
-  customerNameSnapshot    String    @map("customer_name_snapshot") @db.VarChar(150)
-  invoiceSequentialSnapshot String? @map("invoice_sequential_snapshot") @db.VarChar(30)
-  productSkuSnapshot      String    @map("product_sku_snapshot") @db.VarChar(30)
-  productNameSnapshot     String    @map("product_name_snapshot") @db.VarChar(200)
-  sizeLabelSnapshot       String    @map("size_label_snapshot") @db.VarChar(30)
-  colorLabelSnapshot      String    @map("color_label_snapshot") @db.VarChar(50)
-  barcodeSnapshot         String    @map("barcode_snapshot") @db.VarChar(32)
-  quantity                Int
-  reason                  String    @db.VarChar(250)
-  returnToStock           Boolean   @default(false) @map("return_to_stock")
-  refundedUnitPrice       Decimal   @map("refunded_unit_price") @db.Decimal(12, 2)
-  refundedTotal           Decimal   @map("refunded_total") @db.Decimal(12, 2)
-  createdById             String?   @map("created_by") @db.Uuid
-  updatedById             String?   @map("updated_by") @db.Uuid
-  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  cashRegister            CashRegister @relation(fields: [cashRegisterId], references: [id])
-  product                 Product   @relation(fields: [productId], references: [id])
-  variant                 Variant   @relation(fields: [variantId], references: [id])
-  invoice                 Invoice?  @relation(fields: [invoiceId], references: [id])
-  customer                Customer? @relation(fields: [customerId], references: [id])
+  id                        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  returnDate                DateTime     @default(now()) @map("return_date") @db.Date
+  cashRegisterId            String       @map("cash_register_id") @db.Uuid
+  productId                 String       @map("product_id") @db.Uuid
+  variantId                 String       @map("variant_id") @db.Uuid
+  invoiceId                 String?      @map("invoice_id") @db.Uuid
+  customerId                String?      @map("customer_id") @db.Uuid
+  customerNameSnapshot      String       @map("customer_name_snapshot") @db.VarChar(150)
+  invoiceSequentialSnapshot String?      @map("invoice_sequential_snapshot") @db.VarChar(30)
+  productSkuSnapshot        String       @map("product_sku_snapshot") @db.VarChar(30)
+  productNameSnapshot       String       @map("product_name_snapshot") @db.VarChar(200)
+  sizeLabelSnapshot         String       @map("size_label_snapshot") @db.VarChar(30)
+  colorLabelSnapshot        String       @map("color_label_snapshot") @db.VarChar(50)
+  barcodeSnapshot           String       @map("barcode_snapshot") @db.VarChar(32)
+  quantity                  Int
+  reason                    String       @db.VarChar(250)
+  returnToStock             Boolean      @default(false) @map("return_to_stock")
+  refundedUnitPrice         Decimal      @map("refunded_unit_price") @db.Decimal(12, 2)
+  refundedTotal             Decimal      @map("refunded_total") @db.Decimal(12, 2)
+  createdById               String?      @map("created_by") @db.Uuid
+  updatedById               String?      @map("updated_by") @db.Uuid
+  createdAt                 DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  cashRegister              CashRegister @relation(fields: [cashRegisterId], references: [id])
+  product                   Product      @relation(fields: [productId], references: [id])
+  variant                   Variant      @relation(fields: [variantId], references: [id])
+  invoice                   Invoice?     @relation(fields: [invoiceId], references: [id])
+  customer                  Customer?    @relation(fields: [customerId], references: [id])
 
   @@map("store_returns")
 }
 
 model Invoice {
-  id                           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  sequential                   String          @unique @map("invoice_number") @db.VarChar(30)
-  issuedAt                     DateTime        @default(now()) @map("issue_date") @db.Timestamptz(6)
-  customerId                   String?         @map("customer_id") @db.Uuid
-  customerNameSnapshot         String          @map("customer_name_snapshot") @db.VarChar(150)
-  customerIdentificationSnapshot String        @map("customer_identification_snapshot") @db.VarChar(30)
-  customerAddressSnapshot      String?         @map("customer_address_snapshot") @db.VarChar(250)
-  customerPhoneSnapshot        String?         @map("customer_phone_snapshot") @db.VarChar(30)
-  customerEmailSnapshot        String?         @map("customer_email_snapshot") @db.VarChar(150)
-  isFinalConsumer              Boolean         @default(true) @map("is_final_consumer")
-  subtotal                     Decimal         @db.Decimal(12, 2)
-  taxTotal                     Decimal         @map("tax_total") @db.Decimal(12, 2)
-  total                        Decimal         @db.Decimal(12, 2)
-  status                       InvoiceStatus   @default(ISSUED)
-  notes                        String?
-  cashRegisterId               String?         @map("cash_register_id") @db.Uuid
-  createdById                  String?         @map("created_by") @db.Uuid
-  createdAt                    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                    DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
-  customer                     Customer?       @relation(fields: [customerId], references: [id])
-  cashRegister                 CashRegister?   @relation(fields: [cashRegisterId], references: [id])
-  lines                        InvoiceLine[]
-  payments                     InvoicePayment[]
-  receivable                   Receivable?
-  cancellation                 InvoiceCancellation?
-  returns                      StoreReturn[]
+  id                             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sequential                     String               @unique @map("invoice_number") @db.VarChar(30)
+  issuedAt                       DateTime             @default(now()) @map("issue_date") @db.Timestamptz(6)
+  customerId                     String?              @map("customer_id") @db.Uuid
+  customerNameSnapshot           String               @map("customer_name_snapshot") @db.VarChar(150)
+  customerIdentificationSnapshot String               @map("customer_identification_snapshot") @db.VarChar(30)
+  customerAddressSnapshot        String?              @map("customer_address_snapshot") @db.VarChar(250)
+  customerPhoneSnapshot          String?              @map("customer_phone_snapshot") @db.VarChar(30)
+  customerEmailSnapshot          String?              @map("customer_email_snapshot") @db.VarChar(150)
+  isFinalConsumer                Boolean              @default(true) @map("is_final_consumer")
+  subtotal                       Decimal              @db.Decimal(12, 2)
+  taxTotal                       Decimal              @map("tax_total") @db.Decimal(12, 2)
+  total                          Decimal              @db.Decimal(12, 2)
+  status                         InvoiceStatus        @default(ISSUED)
+  notes                          String?
+  cashRegisterId                 String?              @map("cash_register_id") @db.Uuid
+  createdById                    String?              @map("created_by") @db.Uuid
+  createdAt                      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                      DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  customer                       Customer?            @relation(fields: [customerId], references: [id])
+  cashRegister                   CashRegister?        @relation(fields: [cashRegisterId], references: [id])
+  lines                          InvoiceLine[]
+  payments                       InvoicePayment[]
+  receivable                     Receivable?
+  cancellation                   InvoiceCancellation?
+  returns                        StoreReturn[]
 
   @@map("invoices")
 }
 
 model InvoiceLine {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  invoiceId    String    @map("invoice_id") @db.Uuid
-  productId    String    @map("product_id") @db.Uuid
-  variantId    String    @map("variant_id") @db.Uuid
-  barcode      String    @db.VarChar(32)
-  description  String    @map("description_snapshot") @db.VarChar(200)
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId    String   @map("invoice_id") @db.Uuid
+  productId    String   @map("product_id") @db.Uuid
+  variantId    String   @map("variant_id") @db.Uuid
+  barcode      String   @db.VarChar(32)
+  description  String   @map("description_snapshot") @db.VarChar(200)
   quantity     Int
-  unitPrice    Decimal   @map("unit_price") @db.Decimal(12, 2)
-  lineSubtotal Decimal   @map("line_subtotal") @db.Decimal(12, 2)
-  taxRate      Decimal   @map("tax_rate") @db.Decimal(7, 4)
-  lineTax      Decimal   @map("line_tax") @db.Decimal(12, 2)
-  lineTotal    Decimal   @map("line_total") @db.Decimal(12, 2)
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  invoice      Invoice   @relation(fields: [invoiceId], references: [id])
-  product      Product   @relation(fields: [productId], references: [id])
-  variant      Variant   @relation(fields: [variantId], references: [id])
+  unitPrice    Decimal  @map("unit_price") @db.Decimal(12, 2)
+  lineSubtotal Decimal  @map("line_subtotal") @db.Decimal(12, 2)
+  taxRate      Decimal  @map("tax_rate") @db.Decimal(7, 4)
+  lineTax      Decimal  @map("line_tax") @db.Decimal(12, 2)
+  lineTotal    Decimal  @map("line_total") @db.Decimal(12, 2)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  invoice      Invoice  @relation(fields: [invoiceId], references: [id])
+  product      Product  @relation(fields: [productId], references: [id])
+  variant      Variant  @relation(fields: [variantId], references: [id])
 
   @@map("invoice_items")
 }
@@ -412,30 +412,32 @@ model InvoicePayment {
 }
 
 model InvoiceCancellation {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  invoiceId   String   @unique @map("invoice_id") @db.Uuid
-  cancelledAt DateTime @default(now()) @map("cancelled_at") @db.Timestamptz(6)
-  reason      String?
-  cancelledById String? @map("cancelled_by") @db.Uuid
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId     String   @unique @map("invoice_id") @db.Uuid
+  cancelledAt   DateTime @default(now()) @map("cancelled_at") @db.Timestamptz(6)
+  reason        String?
+  cancelledById String?  @map("cancelled_by") @db.Uuid
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
 
   @@map("invoice_cancellations")
 }
 
 model Receivable {
-  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  invoiceId    String             @unique @map("invoice_id") @db.Uuid
-  customerId   String             @map("customer_id") @db.Uuid
-  originalAmount Decimal          @map("original_amount") @db.Decimal(12, 2)
-  paidAmount   Decimal            @default(0) @map("paid_amount") @db.Decimal(12, 2)
-  balance      Decimal            @map("pending_amount") @db.Decimal(12, 2)
-  status       ReceivableStatus   @default(OPEN)
-  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime           @default(now()) @map("updated_at") @db.Timestamptz(6)
-  paidAt       DateTime?          @map("paid_at") @db.Timestamptz(6)
-  customer     Customer           @relation(fields: [customerId], references: [id])
-  invoice      Invoice            @relation(fields: [invoiceId], references: [id])
-  payments  ReceivablePayment[]
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId      String?             @unique @map("invoice_id") @db.Uuid
+  customerId     String              @map("customer_id") @db.Uuid
+  originalAmount Decimal             @map("original_amount") @db.Decimal(12, 2)
+  paidAmount     Decimal             @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  balance        Decimal             @map("pending_amount") @db.Decimal(12, 2)
+  status         ReceivableStatus    @default(OPEN)
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  paidAt         DateTime?           @map("paid_at") @db.Timestamptz(6)
+  isInitialDebt  Boolean             @default(false) @map("is_initial_debt")
+  lastPaymentAt  DateTime            @default(now()) @map("last_payment_at") @db.Timestamptz(6)
+  customer       Customer            @relation(fields: [customerId], references: [id])
+  invoice        Invoice?            @relation(fields: [invoiceId], references: [id])
+  payments       ReceivablePayment[]
 
   @@map("accounts_receivable")
 }

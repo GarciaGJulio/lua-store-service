@@ -21,7 +21,13 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { CouponDiscountType, CouponScope, InvoiceStatus, PaymentMethod, Prisma } from '@prisma/client';
+import {
+  CouponDiscountType,
+  CouponScope,
+  InvoiceStatus,
+  PaymentMethod,
+  Prisma,
+} from '@prisma/client';
 import { PaginationQueryDto } from '@/common/dto/pagination-query.dto';
 import { PrismaService } from '@/database/prisma.service';
 import { InvoicePdfService } from './invoice-pdf.service';
@@ -300,11 +306,15 @@ class InvoicesService {
         ]);
 
         if (dto.customerId && (!customer || !customer.isActive)) {
-          throw new BadRequestException('El cliente seleccionado no existe o esta inactivo.');
+          throw new BadRequestException(
+            'El cliente seleccionado no existe o esta inactivo.',
+          );
         }
 
         if (dto.cashRegisterId && (!cashRegister || !cashRegister.isActive)) {
-          throw new BadRequestException('La caja seleccionada no existe o esta inactiva.');
+          throw new BadRequestException(
+            'La caja seleccionada no existe o esta inactiva.',
+          );
         }
 
         if (hasCreditPayment && !customer) {
@@ -313,7 +323,9 @@ class InvoicesService {
           );
         }
 
-        const uniqueVariantIds = [...new Set(dto.lines.map((line) => line.variantId))];
+        const uniqueVariantIds = [
+          ...new Set(dto.lines.map((line) => line.variantId)),
+        ];
         const uniqueCouponIds = [
           ...new Set(
             dto.lines
@@ -346,8 +358,12 @@ class InvoicesService {
               },
             })
           : [];
-        const variantsById = new Map(variants.map((variant) => [variant.id, variant]));
-        const couponsById = new Map(coupons.map((coupon) => [coupon.id, coupon]));
+        const variantsById = new Map(
+          variants.map((variant) => [variant.id, variant]),
+        );
+        const couponsById = new Map(
+          coupons.map((coupon) => [coupon.id, coupon]),
+        );
 
         if (variants.length !== uniqueVariantIds.length) {
           throw new BadRequestException('Una o mas variantes no existen.');
@@ -368,17 +384,27 @@ class InvoicesService {
           const variant = variantsById.get(line.variantId);
 
           if (!variant) {
-            throw new BadRequestException(`La variante ${line.variantId} no existe.`);
+            throw new BadRequestException(
+              `La variante ${line.variantId} no existe.`,
+            );
           }
 
-          if (!variant.isActive || !variant.product.isActive || !variant.barcode.isActive) {
+          if (
+            !variant.isActive ||
+            !variant.product.isActive ||
+            !variant.barcode.isActive
+          ) {
             throw new BadRequestException(
               `La variante ${variant.product.name} / ${variant.sizeLabel} / ${variant.colorLabel} no esta disponible para facturacion.`,
             );
           }
 
-          const unitPrice = Number((line.unitPrice ?? Number(variant.price)).toFixed(2));
-          const taxRate = Number((line.taxRate ?? Number(variant.product.tax.rate)).toFixed(4));
+          const unitPrice = Number(
+            (line.unitPrice ?? Number(variant.price)).toFixed(2),
+          );
+          const taxRate = Number(
+            (line.taxRate ?? Number(variant.product.tax.rate)).toFixed(4),
+          );
           const taxFactor = 1 + taxRate / 100;
           const grossLineAmount = variant.product.taxIncluded
             ? Number((line.quantity * unitPrice).toFixed(2))
@@ -413,7 +439,9 @@ class InvoicesService {
         });
 
         const grossAfterItemTotal = Number(
-          draftLines.reduce((sum, line) => sum + line.grossAfterItemDiscount, 0).toFixed(2),
+          draftLines
+            .reduce((sum, line) => sum + line.grossAfterItemDiscount, 0)
+            .toFixed(2),
         );
         const cartDiscountTotal = cartCoupon
           ? this.applyCouponDiscount(cartCoupon, grossAfterItemTotal)
@@ -425,7 +453,10 @@ class InvoicesService {
 
         const normalizedLines = draftLines.map((line, index) => {
           const lineTotal = Number(
-            Math.max(0, line.grossAfterItemDiscount - cartDiscountAllocation[index]).toFixed(2),
+            Math.max(
+              0,
+              line.grossAfterItemDiscount - cartDiscountAllocation[index],
+            ).toFixed(2),
           );
           const lineSubtotal = Number((lineTotal / line.taxFactor).toFixed(2));
           const lineTax = Number((lineTotal - lineSubtotal).toFixed(2));
@@ -452,9 +483,13 @@ class InvoicesService {
 
         const normalizedSubtotal = Number(subtotal.toFixed(2));
         const normalizedTaxTotal = Number(taxTotal.toFixed(2));
-        const total = Number((normalizedSubtotal + normalizedTaxTotal).toFixed(2));
+        const total = Number(
+          (normalizedSubtotal + normalizedTaxTotal).toFixed(2),
+        );
         const paymentTotal = Number(
-          dto.payments.reduce((sum, payment) => sum + payment.amount, 0).toFixed(2),
+          dto.payments
+            .reduce((sum, payment) => sum + payment.amount, 0)
+            .toFixed(2),
         );
 
         if (Math.abs(paymentTotal - total) > 0.01) {
@@ -463,7 +498,49 @@ class InvoicesService {
           );
         }
 
-        const documentNumber = await this.getNextDocumentNumber(transaction, 'INVOICE');
+        const quantityByVariantId = new Map<string, number>();
+        for (const line of normalizedLines) {
+          quantityByVariantId.set(
+            line.variantId,
+            (quantityByVariantId.get(line.variantId) ?? 0) + line.quantity,
+          );
+        }
+
+        const quantityByProductId = new Map<string, number>();
+        for (const [variantId, quantity] of quantityByVariantId) {
+          const variant = variantsById.get(variantId)!;
+          const stockUpdate = await transaction.variant.updateMany({
+            where: { id: variantId, stock: { gte: quantity } },
+            data: { stock: { decrement: quantity } },
+          });
+
+          if (stockUpdate.count !== 1) {
+            throw new BadRequestException(
+              `Producto no cuenta con stock suficiente. ${variant.product.name} / ${variant.sizeLabel} / ${variant.colorLabel}.`,
+            );
+          }
+
+          quantityByProductId.set(
+            variant.productId,
+            (quantityByProductId.get(variant.productId) ?? 0) + quantity,
+          );
+        }
+
+        for (const productId of quantityByProductId.keys()) {
+          const stockSummary = await transaction.variant.aggregate({
+            where: { productId },
+            _sum: { stock: true },
+          });
+          await transaction.product.update({
+            where: { id: productId },
+            data: { totalStock: stockSummary._sum.stock ?? 0 },
+          });
+        }
+
+        const documentNumber = await this.getNextDocumentNumber(
+          transaction,
+          'INVOICE',
+        );
         const invoice = await transaction.invoice.create({
           data: {
             cashRegisterId: cashRegister?.id,
@@ -498,7 +575,9 @@ class InvoicesService {
               })),
             },
             sequential: documentNumber,
-            status: hasCreditPayment ? InvoiceStatus.CREDIT_PENDING : InvoiceStatus.ISSUED,
+            status: hasCreditPayment
+              ? InvoiceStatus.CREDIT_PENDING
+              : InvoiceStatus.ISSUED,
             subtotal: normalizedSubtotal,
             taxTotal: normalizedTaxTotal,
             total,
@@ -525,10 +604,31 @@ class InvoicesService {
             metadata: {
               customerId: customer?.id ?? null,
               cartCouponId: cartCoupon?.id ?? null,
+              cartCoupon: cartCoupon
+                ? {
+                    id: cartCoupon.id,
+                    name: cartCoupon.name,
+                    discountType: cartCoupon.discountType,
+                    discountValue: Number(cartCoupon.discountValue),
+                  }
+                : null,
               hasCreditPayment,
               lineDiscounts: normalizedLines.map((line) => ({
                 cartDiscount: line.cartDiscount,
                 itemCouponId: line.itemCouponId,
+                itemCoupon: line.itemCouponId
+                  ? (() => {
+                      const coupon = couponsById.get(line.itemCouponId);
+                      return coupon
+                        ? {
+                            id: coupon.id,
+                            name: coupon.name,
+                            discountType: coupon.discountType,
+                            discountValue: Number(coupon.discountValue),
+                          }
+                        : null;
+                    })()
+                  : null,
                 itemDiscount: line.itemDiscount,
                 variantId: line.variantId,
               })),
@@ -553,13 +653,16 @@ class InvoicesService {
       const reason = dto.reason.trim();
 
       if (!reason) {
-        throw new BadRequestException('Debes ingresar el motivo de anulacion del comprobante.');
+        throw new BadRequestException(
+          'Debes ingresar el motivo de anulacion del comprobante.',
+        );
       }
 
       const invoice = await transaction.invoice.findUnique({
         where: { id: invoiceId },
         include: {
           cancellation: true,
+          lines: true,
           receivable: {
             include: {
               payments: true,
@@ -585,6 +688,33 @@ class InvoicesService {
       if (invoice.receivable) {
         await transaction.receivable.delete({
           where: { id: invoice.receivable.id },
+        });
+      }
+
+      const restoredByVariant = new Map<string, number>();
+      for (const line of invoice.lines) {
+        restoredByVariant.set(
+          line.variantId,
+          (restoredByVariant.get(line.variantId) ?? 0) + line.quantity,
+        );
+      }
+      const affectedProductIds = new Set<string>();
+      for (const [variantId, quantity] of restoredByVariant) {
+        const variant = await transaction.variant.update({
+          where: { id: variantId },
+          data: { stock: { increment: quantity } },
+          select: { productId: true },
+        });
+        affectedProductIds.add(variant.productId);
+      }
+      for (const productId of affectedProductIds) {
+        const stockSummary = await transaction.variant.aggregate({
+          where: { productId },
+          _sum: { stock: true },
+        });
+        await transaction.product.update({
+          where: { id: productId },
+          data: { totalStock: stockSummary._sum.stock ?? 0 },
         });
       }
 
@@ -632,7 +762,12 @@ class InvoicesService {
     if (search) {
       where.OR = [
         { customerNameSnapshot: { contains: search, mode: 'insensitive' } },
-        { customerIdentificationSnapshot: { contains: search, mode: 'insensitive' } },
+        {
+          customerIdentificationSnapshot: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
         { sequential: { contains: search, mode: 'insensitive' } },
       ];
     }
@@ -644,6 +779,7 @@ class InvoicesService {
     coupon:
       | {
           id: string;
+          name: string;
           scope: CouponScope;
           isActive: boolean;
           validFrom: Date;
@@ -661,7 +797,9 @@ class InvoicesService {
     }
 
     if (coupon.scope !== expectedScope) {
-      throw new BadRequestException('El cupon seleccionado no corresponde al ambito esperado.');
+      throw new BadRequestException(
+        'El cupon seleccionado no corresponde al ambito esperado.',
+      );
     }
 
     const today = this.normalizeDayStart(new Date().toISOString());
@@ -671,7 +809,9 @@ class InvoicesService {
       coupon.validFrom.getTime() > today.getTime() ||
       coupon.validTo.getTime() < today.getTime()
     ) {
-      throw new BadRequestException('El cupon seleccionado no se encuentra disponible.');
+      throw new BadRequestException(
+        'El cupon seleccionado no se encuentra disponible.',
+      );
     }
 
     return {
@@ -695,19 +835,31 @@ class InvoicesService {
     return Number(Math.min(baseAmount, rawDiscount).toFixed(2));
   }
 
-  private allocateCartDiscount(lineAmounts: Array<number>, totalDiscount: number) {
-    const lineAmountCents = lineAmounts.map((amount) => Math.max(0, Math.round(amount * 100)));
+  private allocateCartDiscount(
+    lineAmounts: Array<number>,
+    totalDiscount: number,
+  ) {
+    const lineAmountCents = lineAmounts.map((amount) =>
+      Math.max(0, Math.round(amount * 100)),
+    );
     const totalDiscountCents = Math.max(0, Math.round(totalDiscount * 100));
-    const totalLineCents = lineAmountCents.reduce((sum, amount) => sum + amount, 0);
+    const totalLineCents = lineAmountCents.reduce(
+      (sum, amount) => sum + amount,
+      0,
+    );
 
     if (totalDiscountCents === 0 || totalLineCents === 0) {
       return lineAmounts.map(() => 0);
     }
 
     const allocated = lineAmountCents.map((amount) =>
-      Math.min(amount, Math.floor((totalDiscountCents * amount) / totalLineCents)),
+      Math.min(
+        amount,
+        Math.floor((totalDiscountCents * amount) / totalLineCents),
+      ),
     );
-    let remainder = totalDiscountCents - allocated.reduce((sum, amount) => sum + amount, 0);
+    let remainder =
+      totalDiscountCents - allocated.reduce((sum, amount) => sum + amount, 0);
     const indexesByAmount = lineAmountCents
       .map((amount, index) => ({ amount, index }))
       .sort((left, right) => right.amount - left.amount)
@@ -754,7 +906,9 @@ class InvoicesService {
     );
   }
 
-  private async getInvoiceDiscountContext(invoiceId: string): Promise<InvoiceDiscountContext> {
+  private async getInvoiceDiscountContext(
+    invoiceId: string,
+  ): Promise<InvoiceDiscountContext> {
     const auditLog = await this.prisma.auditLog.findFirst({
       where: {
         action: 'create',
@@ -771,14 +925,36 @@ class InvoicesService {
     });
 
     const metadata =
-      auditLog?.metadata && typeof auditLog.metadata === 'object' && !Array.isArray(auditLog.metadata)
+      auditLog?.metadata &&
+      typeof auditLog.metadata === 'object' &&
+      !Array.isArray(auditLog.metadata)
         ? (auditLog.metadata as Record<string, unknown>)
         : null;
 
     const cartCouponId =
-      typeof metadata?.cartCouponId === 'string' && metadata.cartCouponId.trim().length > 0
+      typeof metadata?.cartCouponId === 'string' &&
+      metadata.cartCouponId.trim().length > 0
         ? metadata.cartCouponId
         : null;
+    const parseCouponSnapshot = (value: unknown) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        return null;
+      const row = value as Record<string, unknown>;
+      if (
+        typeof row.id !== 'string' ||
+        typeof row.name !== 'string' ||
+        (row.discountType !== CouponDiscountType.AMOUNT &&
+          row.discountType !== CouponDiscountType.PERCENTAGE)
+      )
+        return null;
+      return {
+        id: row.id,
+        name: row.name,
+        discountType: row.discountType,
+        discountValue: Number(row.discountValue ?? 0),
+      };
+    };
+    const cartCouponSnapshot = parseCouponSnapshot(metadata?.cartCoupon);
 
     const rawLineDiscounts = Array.isArray(metadata?.lineDiscounts)
       ? metadata.lineDiscounts
@@ -791,7 +967,8 @@ class InvoicesService {
         }
 
         const row = entry as Record<string, unknown>;
-        const variantId = typeof row.variantId === 'string' ? row.variantId : null;
+        const variantId =
+          typeof row.variantId === 'string' ? row.variantId : null;
 
         if (!variantId) {
           return null;
@@ -799,13 +976,19 @@ class InvoicesService {
 
         return {
           cartDiscount:
-            typeof row.cartDiscount === 'number' ? row.cartDiscount : Number(row.cartDiscount ?? 0),
+            typeof row.cartDiscount === 'number'
+              ? row.cartDiscount
+              : Number(row.cartDiscount ?? 0),
           itemCouponId:
-            typeof row.itemCouponId === 'string' && row.itemCouponId.trim().length > 0
+            typeof row.itemCouponId === 'string' &&
+            row.itemCouponId.trim().length > 0
               ? row.itemCouponId
               : null,
+          itemCouponSnapshot: parseCouponSnapshot(row.itemCoupon),
           itemDiscount:
-            typeof row.itemDiscount === 'number' ? row.itemDiscount : Number(row.itemDiscount ?? 0),
+            typeof row.itemDiscount === 'number'
+              ? row.itemDiscount
+              : Number(row.itemDiscount ?? 0),
           variantId,
         };
       })
@@ -817,6 +1000,12 @@ class InvoicesService {
           itemCouponId: string | null;
           itemDiscount: number;
           cartDiscount: number;
+          itemCouponSnapshot: {
+            id: string;
+            name: string;
+            discountType: CouponDiscountType;
+            discountValue: number;
+          } | null;
         } => Boolean(entry),
       );
 
@@ -881,7 +1070,11 @@ class InvoicesService {
 
       linesByVariantId.set(entry.variantId, {
         cartDiscount,
-        itemCoupon: entry.itemCouponId ? couponsById.get(entry.itemCouponId) ?? null : null,
+        itemCoupon:
+          entry.itemCouponSnapshot ??
+          (entry.itemCouponId
+            ? (couponsById.get(entry.itemCouponId) ?? null)
+            : null),
         itemDiscount,
       });
     }
@@ -889,12 +1082,13 @@ class InvoicesService {
     return {
       cartCoupon: cartCouponId
         ? {
-            ...(couponsById.get(cartCouponId) ?? {
-              id: cartCouponId,
-              name: 'Cupon de carrito',
-              discountType: CouponDiscountType.AMOUNT,
-              discountValue: totalCartDiscount,
-            }),
+            ...(cartCouponSnapshot ??
+              couponsById.get(cartCouponId) ?? {
+                id: cartCouponId,
+                name: 'Cupon de carrito',
+                discountType: CouponDiscountType.AMOUNT,
+                discountValue: totalCartDiscount,
+              }),
             appliedAmount: Number(totalCartDiscount.toFixed(2)),
           }
         : null,
@@ -944,11 +1138,17 @@ class InvoicesService {
       cartCoupon: discountContext.cartCoupon,
       lines: invoice.lines.map((line) => ({
         barcode: line.barcode,
-        cartDiscount: discountContext.linesByVariantId.get(line.variantId)?.cartDiscount ?? 0,
+        cartDiscount:
+          discountContext.linesByVariantId.get(line.variantId)?.cartDiscount ??
+          0,
         colorLabel: line.variant.colorLabel,
         description: line.description,
-        itemCoupon: discountContext.linesByVariantId.get(line.variantId)?.itemCoupon ?? null,
-        itemDiscount: discountContext.linesByVariantId.get(line.variantId)?.itemDiscount ?? 0,
+        itemCoupon:
+          discountContext.linesByVariantId.get(line.variantId)?.itemCoupon ??
+          null,
+        itemDiscount:
+          discountContext.linesByVariantId.get(line.variantId)?.itemDiscount ??
+          0,
         lineSubtotal: Number(line.lineSubtotal),
         lineTax: Number(line.lineTax),
         lineTotal: Number(line.lineTotal),
@@ -1009,7 +1209,9 @@ class InvoicesService {
     transaction: Prisma.TransactionClient,
     documentType: string,
   ) {
-    const sequenceRows = await transaction.$queryRaw<Array<SequencedDocument>>(Prisma.sql`
+    const sequenceRows = await transaction.$queryRaw<
+      Array<SequencedDocument>
+    >(Prisma.sql`
       UPDATE public.document_sequences
          SET current_value = current_value + 1,
              updated_at = NOW()
@@ -1054,15 +1256,21 @@ class InvoicesService {
 
   private extractPrismaMessage(message: string) {
     if (message.includes('Producto no cuenta con stock suficiente')) {
-      const stockMessage = message.match(/Producto no cuenta con stock suficiente\.[^"]+/)?.[0];
-      return stockMessage ?? 'Una de las variantes no cuenta con stock suficiente.';
+      const stockMessage = message.match(
+        /Producto no cuenta con stock suficiente\.[^"]+/,
+      )?.[0];
+      return (
+        stockMessage ?? 'Una de las variantes no cuenta con stock suficiente.'
+      );
     }
 
     if (message.includes('Credito Monse no puede combinarse')) {
       return 'Credito Monse no puede combinarse con otros metodos de pago.';
     }
 
-    if (message.includes('Credito Monse no puede emitirse como consumidor final')) {
+    if (
+      message.includes('Credito Monse no puede emitirse como consumidor final')
+    ) {
       return 'Credito Monse requiere un cliente real y no puede emitirse como consumidor final.';
     }
 
