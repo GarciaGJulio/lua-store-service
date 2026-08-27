@@ -136,7 +136,7 @@ class ReceivablesService {
     documentType: string,
   ) {
     const sequenceRows = await transaction.$queryRaw<Array<SequencedDocument>>(Prisma.sql`
-      UPDATE lua_store.document_sequences
+      UPDATE public.document_sequences
          SET current_value = current_value + 1,
              updated_at = NOW()
        WHERE document_type = ${documentType}

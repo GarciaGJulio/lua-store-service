@@ -352,14 +352,14 @@ class AnalyticsService {
         COALESCE(SUM(il.line_total), 0) AS sales_total,
         COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin,
         COUNT(DISTINCT i.id) AS invoices_count
-        FROM lua_store.invoices i
-        INNER JOIN lua_store.invoice_items il
+        FROM public.invoices i
+        INNER JOIN public.invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN lua_store.product_variants pv
+        INNER JOIN public.product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = il.product_id
-       WHERE i.status <> 'CANCELLED'::lua_store.invoice_status
+       WHERE i.status <> 'CANCELLED'::public.invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
@@ -372,10 +372,10 @@ class AnalyticsService {
         COALESCE(SUM(sr.refunded_total), 0) AS returns_total,
         COALESCE(SUM(sr.quantity), 0) AS returns_quantity,
         COALESCE(SUM((sr.refunded_unit_price - pv.cost) * sr.quantity), 0) AS returns_margin_total
-        FROM lua_store.store_returns sr
-        INNER JOIN lua_store.product_variants pv
+        FROM public.store_returns sr
+        INNER JOIN public.product_variants pv
                 ON pv.id = sr.variant_id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = sr.product_id
        WHERE sr.return_date >= ${filters.startAt}
          AND sr.return_date < ${filters.endExclusive}
@@ -386,12 +386,12 @@ class AnalyticsService {
   private async getInvoiceCount(filters: AnalyticsFilters, onlyVoided: boolean) {
     return this.prisma.$queryRaw<Array<SalesAggregateRow>>(Prisma.sql`
       SELECT COUNT(DISTINCT i.id) AS invoices_count
-        FROM lua_store.invoices i
+        FROM public.invoices i
        WHERE i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          AND i.status ${onlyVoided
-           ? Prisma.sql`= 'CANCELLED'::lua_store.invoice_status`
-           : Prisma.sql`<> 'CANCELLED'::lua_store.invoice_status`}
+           ? Prisma.sql`= 'CANCELLED'::public.invoice_status`
+           : Prisma.sql`<> 'CANCELLED'::public.invoice_status`}
          ${this.buildInvoiceProductExistsSql(filters)}
     `);
   }
@@ -403,14 +403,14 @@ class AnalyticsService {
         COALESCE(SUM(il.line_total), 0) AS sales_total,
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin
-        FROM lua_store.invoices i
-        INNER JOIN lua_store.invoice_items il
+        FROM public.invoices i
+        INNER JOIN public.invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN lua_store.product_variants pv
+        INNER JOIN public.product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = il.product_id
-       WHERE i.status <> 'CANCELLED'::lua_store.invoice_status
+       WHERE i.status <> 'CANCELLED'::public.invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
@@ -425,10 +425,10 @@ class AnalyticsService {
         DATE(sr.return_date) AS day_key,
         COALESCE(SUM(sr.refunded_total), 0) AS returns_total,
         COALESCE(SUM((sr.refunded_unit_price - pv.cost) * sr.quantity), 0) AS returns_margin_total
-        FROM lua_store.store_returns sr
-        INNER JOIN lua_store.product_variants pv
+        FROM public.store_returns sr
+        INNER JOIN public.product_variants pv
                 ON pv.id = sr.variant_id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = sr.product_id
        WHERE sr.return_date >= ${filters.startAt}
          AND sr.return_date < ${filters.endExclusive}
@@ -446,14 +446,14 @@ class AnalyticsService {
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin,
         COUNT(DISTINCT i.id) AS invoice_count
-        FROM lua_store.invoices i
-        INNER JOIN lua_store.invoice_items il
+        FROM public.invoices i
+        INNER JOIN public.invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN lua_store.product_variants pv
+        INNER JOIN public.product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = il.product_id
-       WHERE i.status <> 'CANCELLED'::lua_store.invoice_status
+       WHERE i.status <> 'CANCELLED'::public.invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
@@ -468,10 +468,10 @@ class AnalyticsService {
         DATE_TRUNC('month', sr.return_date) AS month_key,
         COALESCE(SUM(sr.refunded_total), 0) AS returns_total,
         COALESCE(SUM((sr.refunded_unit_price - pv.cost) * sr.quantity), 0) AS returns_margin_total
-        FROM lua_store.store_returns sr
-        INNER JOIN lua_store.product_variants pv
+        FROM public.store_returns sr
+        INNER JOIN public.product_variants pv
                 ON pv.id = sr.variant_id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = sr.product_id
        WHERE sr.return_date >= ${filters.startAt}
          AND sr.return_date < ${filters.endExclusive}
@@ -488,12 +488,12 @@ class AnalyticsService {
           i.id AS invoice_id,
           i.total AS invoice_total,
           COALESCE(SUM(il.line_total), 0) AS scoped_total
-          FROM lua_store.invoices i
-          INNER JOIN lua_store.invoice_items il
+          FROM public.invoices i
+          INNER JOIN public.invoice_items il
                   ON il.invoice_id = i.id
-          INNER JOIN lua_store.products p
+          INNER JOIN public.products p
                   ON p.id = il.product_id
-         WHERE i.status <> 'CANCELLED'::lua_store.invoice_status
+         WHERE i.status <> 'CANCELLED'::public.invoice_status
            AND i.issue_date >= ${filters.startAt}
            AND i.issue_date < ${filters.endExclusive}
            ${this.buildProductScopeSql(filters)}
@@ -511,7 +511,7 @@ class AnalyticsService {
           0
         ) AS amount_total
         FROM scoped_invoices si
-        INNER JOIN lua_store.invoice_payments ip
+        INNER JOIN public.invoice_payments ip
                 ON ip.invoice_id = si.invoice_id
        GROUP BY ip.payment_method
     `);
@@ -531,18 +531,18 @@ class AnalyticsService {
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM(il.line_total), 0) AS revenue_total,
         COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin
-        FROM lua_store.invoices i
-        INNER JOIN lua_store.invoice_items il
+        FROM public.invoices i
+        INNER JOIN public.invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = il.product_id
-        INNER JOIN lua_store.product_variants pv
+        INNER JOIN public.product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN lua_store.categories c
+        INNER JOIN public.categories c
                 ON c.id = p.category_id
-        INNER JOIN lua_store.subcategories s
+        INNER JOIN public.subcategories s
                 ON s.id = p.subcategory_id
-       WHERE i.status <> 'CANCELLED'::lua_store.invoice_status
+       WHERE i.status <> 'CANCELLED'::public.invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
@@ -571,20 +571,20 @@ class AnalyticsService {
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM(il.line_total), 0) AS revenue_total,
         COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin
-        FROM lua_store.invoices i
-        INNER JOIN lua_store.invoice_items il
+        FROM public.invoices i
+        INNER JOIN public.invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN lua_store.product_variants pv
+        INNER JOIN public.product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = pv.product_id
-        INNER JOIN lua_store.barcodes b
+        INNER JOIN public.barcodes b
                 ON b.id = pv.barcode_id
-        INNER JOIN lua_store.categories c
+        INNER JOIN public.categories c
                 ON c.id = p.category_id
-        INNER JOIN lua_store.subcategories s
+        INNER JOIN public.subcategories s
                 ON s.id = p.subcategory_id
-       WHERE i.status <> 'CANCELLED'::lua_store.invoice_status
+       WHERE i.status <> 'CANCELLED'::public.invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
@@ -607,16 +607,16 @@ class AnalyticsService {
         p.total_stock AS stock_total,
         MAX(i.issue_date) AS last_sold_at,
         COALESCE(MAX(i.issue_date), p.created_at) AS reference_date
-        FROM lua_store.products p
-        INNER JOIN lua_store.categories c
+        FROM public.products p
+        INNER JOIN public.categories c
                 ON c.id = p.category_id
-        INNER JOIN lua_store.subcategories s
+        INNER JOIN public.subcategories s
                 ON s.id = p.subcategory_id
-        LEFT JOIN lua_store.invoice_items il
+        LEFT JOIN public.invoice_items il
                ON il.product_id = p.id
-        LEFT JOIN lua_store.invoices i
+        LEFT JOIN public.invoices i
                ON i.id = il.invoice_id
-              AND i.status <> 'CANCELLED'::lua_store.invoice_status
+              AND i.status <> 'CANCELLED'::public.invoice_status
        WHERE p.total_stock > 0
          ${this.buildProductScopeSql(filters)}
        GROUP BY p.id, p.internal_code, p.name, c.name, s.name, p.total_stock, p.created_at
@@ -639,20 +639,20 @@ class AnalyticsService {
         pv.stock AS stock_total,
         MAX(i.issue_date) AS last_sold_at,
         COALESCE(MAX(i.issue_date), pv.created_at) AS reference_date
-        FROM lua_store.product_variants pv
-        INNER JOIN lua_store.products p
+        FROM public.product_variants pv
+        INNER JOIN public.products p
                 ON p.id = pv.product_id
-        INNER JOIN lua_store.barcodes b
+        INNER JOIN public.barcodes b
                 ON b.id = pv.barcode_id
-        INNER JOIN lua_store.categories c
+        INNER JOIN public.categories c
                 ON c.id = p.category_id
-        INNER JOIN lua_store.subcategories s
+        INNER JOIN public.subcategories s
                 ON s.id = p.subcategory_id
-        LEFT JOIN lua_store.invoice_items il
+        LEFT JOIN public.invoice_items il
                ON il.variant_id = pv.id
-        LEFT JOIN lua_store.invoices i
+        LEFT JOIN public.invoices i
                ON i.id = il.invoice_id
-              AND i.status <> 'CANCELLED'::lua_store.invoice_status
+              AND i.status <> 'CANCELLED'::public.invoice_status
        WHERE pv.stock > 0
          ${this.buildProductScopeSql(filters)}
        GROUP BY pv.id, p.internal_code, p.name, c.name, s.name, pv.size_label, pv.color_label, b.code, pv.stock, pv.created_at
@@ -673,14 +673,14 @@ class AnalyticsService {
         pv.color_label,
         b.code AS barcode,
         pv.stock AS stock_total
-        FROM lua_store.product_variants pv
-        INNER JOIN lua_store.products p
+        FROM public.product_variants pv
+        INNER JOIN public.products p
                 ON p.id = pv.product_id
-        INNER JOIN lua_store.barcodes b
+        INNER JOIN public.barcodes b
                 ON b.id = pv.barcode_id
-        INNER JOIN lua_store.categories c
+        INNER JOIN public.categories c
                 ON c.id = p.category_id
-        INNER JOIN lua_store.subcategories s
+        INNER JOIN public.subcategories s
                 ON s.id = p.subcategory_id
        WHERE pv.stock ${onlyOutOfStock
          ? Prisma.sql`= 0`
@@ -700,14 +700,14 @@ class AnalyticsService {
         COUNT(DISTINCT i.id) AS invoices_count,
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM(il.line_total), 0) AS revenue_total
-        FROM lua_store.invoices i
-        INNER JOIN lua_store.invoice_items il
+        FROM public.invoices i
+        INNER JOIN public.invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN lua_store.products p
+        INNER JOIN public.products p
                 ON p.id = il.product_id
-        LEFT JOIN lua_store.customers c
+        LEFT JOIN public.customers c
                ON c.id = i.customer_id
-       WHERE i.status <> 'CANCELLED'::lua_store.invoice_status
+       WHERE i.status <> 'CANCELLED'::public.invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
@@ -722,10 +722,10 @@ class AnalyticsService {
       SELECT
         COUNT(DISTINCT ar.id) AS open_count,
         COALESCE(SUM(ar.pending_amount), 0) AS pending_balance
-        FROM lua_store.accounts_receivable ar
-        INNER JOIN lua_store.invoices i
+        FROM public.accounts_receivable ar
+        INNER JOIN public.invoices i
                 ON i.id = ar.invoice_id
-       WHERE ar.status IN ('PENDING'::lua_store.receivable_status, 'PARTIAL'::lua_store.receivable_status)
+       WHERE ar.status IN ('PENDING'::public.receivable_status, 'PARTIAL'::public.receivable_status)
          ${this.buildInvoiceProductExistsSql(filters)}
     `);
   }
@@ -734,10 +734,10 @@ class AnalyticsService {
     return this.prisma.$queryRaw<Array<ReceivableCollectionsRow>>(Prisma.sql`
       SELECT
         COALESCE(SUM(rp.amount), 0) AS collections_total
-        FROM lua_store.receivable_payments rp
-        INNER JOIN lua_store.accounts_receivable ar
+        FROM public.receivable_payments rp
+        INNER JOIN public.accounts_receivable ar
                 ON ar.id = rp.account_receivable_id
-        INNER JOIN lua_store.invoices i
+        INNER JOIN public.invoices i
                 ON i.id = ar.invoice_id
        WHERE rp.paid_at >= ${filters.startAt}
          AND rp.paid_at < ${filters.endExclusive}
@@ -927,8 +927,8 @@ class AnalyticsService {
     return Prisma.sql`
       AND EXISTS (
         SELECT 1
-          FROM lua_store.invoice_items il
-          INNER JOIN lua_store.products p
+          FROM public.invoice_items il
+          INNER JOIN public.products p
                   ON p.id = il.product_id
          WHERE il.invoice_id = i.id
            ${this.buildProductScopeSql(filters)}

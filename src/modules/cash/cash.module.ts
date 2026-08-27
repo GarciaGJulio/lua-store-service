@@ -544,34 +544,34 @@ export class CashService {
     const [invoiceRows, receivableCollectionRows, expenseRows, returnRows] = await Promise.all([
       client.$queryRaw<Array<InvoiceSummaryRow>>(Prisma.sql`
         SELECT
-          COALESCE(SUM(CASE WHEN ip.payment_method = 'CASH'::lua_store.payment_method THEN ip.amount ELSE 0 END), 0) AS cash_sales_total,
-          COALESCE(SUM(CASE WHEN ip.payment_method = 'CREDITO_MONSE'::lua_store.payment_method THEN ip.amount ELSE 0 END), 0) AS credit_sales_total,
-          COALESCE(SUM(CASE WHEN ip.payment_method = 'TRANSFER'::lua_store.payment_method THEN ip.amount ELSE 0 END), 0) AS transfer_sales_total,
-          COALESCE(SUM(CASE WHEN ip.payment_method = 'DE_UNA'::lua_store.payment_method THEN ip.amount ELSE 0 END), 0) AS de_una_sales_total,
-          COALESCE(SUM(CASE WHEN ip.payment_method NOT IN ('CASH'::lua_store.payment_method, 'CREDITO_MONSE'::lua_store.payment_method) THEN ip.amount ELSE 0 END), 0) AS non_cash_sales_total
-            FROM lua_store.invoices i
-            INNER JOIN lua_store.invoice_payments ip
+          COALESCE(SUM(CASE WHEN ip.payment_method = 'CASH'::public.payment_method THEN ip.amount ELSE 0 END), 0) AS cash_sales_total,
+          COALESCE(SUM(CASE WHEN ip.payment_method = 'CREDITO_MONSE'::public.payment_method THEN ip.amount ELSE 0 END), 0) AS credit_sales_total,
+          COALESCE(SUM(CASE WHEN ip.payment_method = 'TRANSFER'::public.payment_method THEN ip.amount ELSE 0 END), 0) AS transfer_sales_total,
+          COALESCE(SUM(CASE WHEN ip.payment_method = 'DE_UNA'::public.payment_method THEN ip.amount ELSE 0 END), 0) AS de_una_sales_total,
+          COALESCE(SUM(CASE WHEN ip.payment_method NOT IN ('CASH'::public.payment_method, 'CREDITO_MONSE'::public.payment_method) THEN ip.amount ELSE 0 END), 0) AS non_cash_sales_total
+            FROM public.invoices i
+            INNER JOIN public.invoice_payments ip
                     ON ip.invoice_id = i.id
            WHERE i.cash_register_id = ${registerId}::uuid
              ${sessionFilters.invoiceRange}
-             AND i.status <> 'CANCELLED'::lua_store.invoice_status
+             AND i.status <> 'CANCELLED'::public.invoice_status
       `),
       client.$queryRaw<Array<ReceivableCollectionSummaryRow>>(Prisma.sql`
         SELECT
-          COALESCE(SUM(CASE WHEN payment_method = 'CASH'::lua_store.payment_method THEN amount ELSE 0 END), 0) AS receivable_collections_total
-            FROM lua_store.receivable_payments
+          COALESCE(SUM(CASE WHEN payment_method = 'CASH'::public.payment_method THEN amount ELSE 0 END), 0) AS receivable_collections_total
+            FROM public.receivable_payments
            WHERE 1 = 1
              ${sessionFilters.receivableRange}
       `),
       client.$queryRaw<Array<ExpenseSummaryRow>>(Prisma.sql`
         SELECT COALESCE(SUM(amount), 0) AS expenses_total
-          FROM lua_store.cash_expenses
+          FROM public.cash_expenses
          WHERE cash_register_id = ${registerId}::uuid
            ${sessionFilters.expenseRange}
       `),
       client.$queryRaw<Array<ReturnSummaryRow>>(Prisma.sql`
         SELECT COALESCE(SUM(refunded_total), 0) AS returns_total
-          FROM lua_store.store_returns
+          FROM public.store_returns
          WHERE cash_register_id = ${registerId}::uuid
            ${sessionFilters.returnRange}
       `),
