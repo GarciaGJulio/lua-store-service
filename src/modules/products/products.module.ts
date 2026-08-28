@@ -667,7 +667,7 @@ class ProductsService {
       },
       where: {
         sku: {
-          startsWith: `${prefix}-`,
+          startsWith: prefix,
           mode: 'insensitive',
         },
       },
@@ -676,7 +676,12 @@ class ProductsService {
     let maxSequence = 0;
 
     for (const product of matchingProducts) {
-      const suffix = product.sku.split('-').pop() ?? '';
+      const suffix = product.sku.slice(prefix.length);
+
+      if (!/^\d+$/.test(suffix)) {
+        continue;
+      }
+
       const parsed = Number(suffix);
 
       if (!Number.isNaN(parsed)) {
@@ -757,20 +762,32 @@ class ProductsService {
     error: Prisma.PrismaClientKnownRequestError,
     sku: string,
   ) {
-    const target = Array.isArray(error.meta?.target) ? error.meta.target : [];
+    const rawTarget = error.meta?.target;
+    const target = Array.isArray(rawTarget)
+      ? rawTarget.map(String)
+      : rawTarget
+        ? [String(rawTarget)]
+        : [];
+    const normalizedTarget = target.join(' ').toLowerCase();
 
-    if (target.includes('internal_code')) {
+    if (
+      normalizedTarget.includes('internal_code') ||
+      normalizedTarget.includes('sku')
+    ) {
       return `Ya existe un producto con el SKU "${sku}". Usa un SKU diferente.`;
     }
 
-    if (target.includes('code')) {
+    if (
+      normalizedTarget.includes('barcode') ||
+      normalizedTarget.includes('code')
+    ) {
       return 'Uno de los codigos de barras ya existe. Verifica las variantes antes de guardar.';
     }
 
     if (
-      target.includes('product_id') &&
-      target.includes('size_label') &&
-      target.includes('color_label')
+      normalizedTarget.includes('product_id') &&
+      normalizedTarget.includes('size_label') &&
+      normalizedTarget.includes('color_label')
     ) {
       return 'No puedes repetir la misma combinacion de talla y color dentro del producto.';
     }
