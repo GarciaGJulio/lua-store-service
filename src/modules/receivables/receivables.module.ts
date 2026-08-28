@@ -144,6 +144,18 @@ class ReceivablesService {
         throw new BadRequestException('Cuenta por cobrar no encontrada.');
       }
 
+      const registeredPaymentsTotal = Number(
+        receivable.payments
+          .reduce((sum, payment) => sum + Number(payment.amount), 0)
+          .toFixed(2),
+      );
+
+      if (Math.abs(registeredPaymentsTotal - Number(receivable.paidAmount)) > 0.01) {
+        throw new BadRequestException(
+          'La cuenta tiene abonos pendientes de conciliacion y no admite nuevos pagos.',
+        );
+      }
+
       if (receivable.status === ReceivableStatus.PAID) {
         throw new BadRequestException('La cuenta ya se encuentra pagada.');
       }
@@ -159,6 +171,33 @@ class ReceivablesService {
         'RECEIVABLE_PAYMENT',
       );
 
+      const updatedRows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        UPDATE public.accounts_receivable
+           SET paid_amount = paid_amount + ${dto.amount},
+               pending_amount = pending_amount - ${dto.amount},
+               status = CASE
+                 WHEN pending_amount - ${dto.amount} = 0
+                   THEN 'PAID'::public.receivable_status
+                 ELSE 'PARTIAL'::public.receivable_status
+               END,
+               paid_at = CASE
+                 WHEN pending_amount - ${dto.amount} = 0 THEN NOW()
+                 ELSE paid_at
+               END,
+               last_payment_at = NOW(),
+               updated_at = NOW()
+         WHERE id = ${receivableId}::uuid
+           AND status <> 'PAID'::public.receivable_status
+           AND pending_amount >= ${dto.amount}
+         RETURNING id
+      `);
+
+      if (updatedRows.length !== 1) {
+        throw new BadRequestException(
+          'La cuenta cambio mientras registrabas el abono. Recarga la cartera e intenta nuevamente.',
+        );
+      }
+
       const payment = await transaction.receivablePayment.create({
         data: {
           amount: dto.amount,
@@ -167,11 +206,6 @@ class ReceivablesService {
           paymentNumber,
           receivableId,
         },
-      });
-
-      await transaction.receivable.update({
-        where: { id: receivableId },
-        data: { lastPaymentAt: payment.paidAt },
       });
 
       const updatedReceivable = await transaction.receivable.findUniqueOrThrow({
