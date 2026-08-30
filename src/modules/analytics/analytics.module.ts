@@ -1,13 +1,18 @@
 import {
   BadRequestException,
   Controller,
+  ForbiddenException,
   Get,
   Injectable,
   Module,
   Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { Type } from 'class-transformer';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
+import type { Request } from 'express';
 import {
   IsDateString,
   IsInt,
@@ -59,6 +64,21 @@ type AnalyticsFilters = {
   startAt: Date;
   subcategoryId?: string;
   topLimit: number;
+};
+
+type AuthenticatedRequest = Request & {
+  user: {
+    email: string;
+    fullName: string;
+    id: string;
+    role: UserRole;
+  };
+};
+
+type InventoryValuationRow = {
+  inventory_cost: Prisma.Decimal | number | null;
+  potential_sales: Prisma.Decimal | number | null;
+  units_available: bigint | number | null;
 };
 
 type SalesAggregateRow = {
@@ -343,6 +363,37 @@ class AnalyticsService {
 
   async getOverview() {
     return this.getDashboard({});
+  }
+
+  async getInventoryValuation(query: AnalyticsDashboardQueryDto) {
+    const filters = this.normalizeFilters(query);
+    const rows = await this.prisma.$queryRaw<Array<InventoryValuationRow>>(Prisma.sql`
+      SELECT
+        COALESCE(SUM(pv.stock), 0) AS units_available,
+        COALESCE(SUM(pv.stock * pv.cost), 0) AS inventory_cost,
+        COALESCE(SUM(pv.stock * pv.price), 0) AS potential_sales
+        FROM public.product_variants pv
+        INNER JOIN public.products p
+                ON p.id = pv.product_id
+       WHERE pv.stock > 0
+         AND pv.is_active = TRUE
+         AND p.is_active = TRUE
+         ${this.buildProductScopeSql(filters)}
+    `);
+    const inventoryCost = this.toNumber(rows[0]?.inventory_cost);
+    const potentialSales = this.toNumber(rows[0]?.potential_sales);
+    const expectedMargin = this.roundCurrency(potentialSales - inventoryCost);
+
+    return {
+      expectedMargin,
+      inventoryCost,
+      marginOnSales:
+        potentialSales > 0
+          ? Number(((expectedMargin / potentialSales) * 100).toFixed(2))
+          : 0,
+      potentialSales,
+      unitsAvailable: this.toInteger(rows[0]?.units_available),
+    };
   }
 
   private async getSalesAggregate(filters: AnalyticsFilters) {
@@ -1073,6 +1124,21 @@ class AnalyticsController {
   @Get('dashboard')
   getDashboard(@Query() query: AnalyticsDashboardQueryDto) {
     return this.analyticsService.getDashboard(query);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('inventory-valuation')
+  getInventoryValuation(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: AnalyticsDashboardQueryDto,
+  ) {
+    if (request.user.email.trim().toLowerCase() !== 'admin@luastore.local') {
+      throw new ForbiddenException(
+        'No tienes permiso para consultar la valoracion del inventario.',
+      );
+    }
+
+    return this.analyticsService.getInventoryValuation(query);
   }
 }
 
