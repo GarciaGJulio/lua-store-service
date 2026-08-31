@@ -14,6 +14,7 @@ import { Prisma } from '@prisma/client';
 import { IsDateString, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PrismaService } from '@/database/prisma.service';
 import { getEcuadorBusinessDayKey } from './business-time';
+import { calculateCashReconciliation } from './cash-reconciliation';
 
 class OpenCashRegisterDto {
   @IsNumber()
@@ -46,12 +47,15 @@ class UpdateCashExpenseDto {
 }
 
 class CloseCashRegisterDto {
-  @IsOptional()
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  countedCashTotal?: number;
+  countedCashTotal!: number;
 
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  countedBankTotal!: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   nextDayOpeningAmount!: number;
 
@@ -370,9 +374,8 @@ export class CashService {
 
       const summary = await this.getSessionSummary(registerId, session, transaction);
       const expectedCashTotal = Number(summary.expectedCashTotal.toFixed(2));
-      const countedCashTotal = Number(
-        (dto.countedCashTotal ?? expectedCashTotal).toFixed(2),
-      );
+      const countedCashTotal = Number(dto.countedCashTotal.toFixed(2));
+      const countedBankTotal = Number(dto.countedBankTotal.toFixed(2));
 
       if (dto.nextDayOpeningAmount > countedCashTotal) {
         throw new BadRequestException(
@@ -380,33 +383,43 @@ export class CashService {
         );
       }
 
-      const differenceAmount = Number((countedCashTotal - expectedCashTotal).toFixed(2));
-      const nextDayOpeningAmount = Number(dto.nextDayOpeningAmount.toFixed(2));
-      const dailyCollectedTotal = Number(
-        (
-          countedCashTotal -
-          nextDayOpeningAmount +
-          summary.transferSalesTotal +
-          summary.deUnaSalesTotal
-        ).toFixed(2),
+      const expectedBankTotal = Number(
+        (summary.transferSalesTotal + summary.deUnaSalesTotal).toFixed(2),
       );
+      const nextDayOpeningAmount = Number(dto.nextDayOpeningAmount.toFixed(2));
+      const {
+        bankDifferenceAmount,
+        dailyCollectedTotal,
+        differenceAmount,
+        totalDifferenceAmount,
+      } = calculateCashReconciliation({
+        countedBankTotal,
+        countedCashTotal,
+        expectedBankTotal,
+        expectedCashTotal,
+        nextDayOpeningAmount,
+      });
 
       await transaction.cashClosure.create({
         data: {
+          bankDifferenceAmount,
           cashRegisterId: registerId,
           cashSalesTotal: summary.cashSalesTotal,
           closureDate: session.operatingDate,
           countedCashTotal,
+          countedBankTotal,
           creditSalesTotal: summary.creditSalesTotal,
           dailyCollectedTotal,
           differenceAmount,
           expectedCashTotal,
+          expectedBankTotal,
           expensesTotal: summary.expensesTotal,
           nextDayOpeningAmount,
           nonCashSalesTotal: summary.nonCashSalesTotal,
           notes: dto.notes?.trim() || undefined,
           openingAmount: summary.openingAmount,
           receivableCollectionsTotal: summary.receivableCollectionsTotal,
+          totalDifferenceAmount,
         },
       });
 
@@ -416,16 +429,20 @@ export class CashService {
           entityId: registerId,
           entityName: 'cash_register',
           metadata: {
+            bankDifferenceAmount,
             cashSalesTotal: summary.cashSalesTotal,
             closureDate: session.operatingDate,
             countedCashTotal,
+            countedBankTotal,
             creditSalesTotal: summary.creditSalesTotal,
             dailyCollectedTotal,
             differenceAmount,
             expensesTotal: summary.expensesTotal,
             expectedCashTotal,
+            expectedBankTotal,
             nextDayOpeningAmount,
             receivableCollectionsTotal: summary.receivableCollectionsTotal,
+            totalDifferenceAmount,
           },
           module: 'cash',
         },

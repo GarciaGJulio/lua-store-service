@@ -275,9 +275,13 @@ model CashClosure {
   expensesTotal              Decimal      @default(0) @map("expenses_total") @db.Decimal(12, 2)
   expectedCashTotal          Decimal      @map("expected_cash_total") @db.Decimal(12, 2)
   countedCashTotal           Decimal      @map("counted_cash_total") @db.Decimal(12, 2)
+  expectedBankTotal          Decimal?     @map("expected_bank_total") @db.Decimal(12, 2)
+  countedBankTotal           Decimal?     @map("counted_bank_total") @db.Decimal(12, 2)
   nextDayOpeningAmount       Decimal      @default(0) @map("next_day_opening_amount") @db.Decimal(12, 2)
   dailyCollectedTotal        Decimal      @default(0) @map("daily_collected_total") @db.Decimal(12, 2)
   differenceAmount           Decimal      @map("difference_amount") @db.Decimal(12, 2)
+  bankDifferenceAmount       Decimal?     @map("bank_difference_amount") @db.Decimal(12, 2)
+  totalDifferenceAmount      Decimal?     @map("total_difference_amount") @db.Decimal(12, 2)
   notes                      String?
   closedById                 String?      @map("closed_by") @db.Uuid
   createdAt                  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
