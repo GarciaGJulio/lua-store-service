@@ -13,6 +13,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { IsDateString, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PrismaService } from '@/database/prisma.service';
+import { getEcuadorBusinessDayKey } from './business-time';
 
 class OpenCashRegisterDto {
   @IsNumber()
@@ -731,11 +732,7 @@ export class CashService {
   }
 
   private getCurrentBusinessDayKey() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return getEcuadorBusinessDayKey();
   }
 
   private getDateKey(value: string | Date) {
