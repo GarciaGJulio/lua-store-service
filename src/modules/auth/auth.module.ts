@@ -152,8 +152,7 @@ class AuthController {
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET') ?? 'change-me',
         signOptions: {
-          expiresIn:
-            (configService.get<string>('JWT_EXPIRES_IN') ?? '8h') as StringValue,
+          expiresIn: '12h' as StringValue,
         },
       }),
     }),
