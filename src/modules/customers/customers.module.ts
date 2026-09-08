@@ -13,15 +13,28 @@ import {
 } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import { Prisma } from '@prisma/client';
-import { IsEmail, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsEmail,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 import { PrismaService } from '@/database/prisma.service';
 
 class CreateCustomerDto {
+  @IsOptional()
   @IsString()
-  identificationType!: string;
+  identificationType?: string;
 
+  @IsOptional()
   @IsString()
-  identificationNumber!: string;
+  identificationNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  alias?: string;
 
   @IsString()
   fullName!: string;
@@ -40,11 +53,17 @@ class CreateCustomerDto {
 }
 
 class UpdateCustomerDto {
+  @IsOptional()
   @IsString()
-  identificationType!: string;
+  identificationType?: string;
 
+  @IsOptional()
   @IsString()
-  identificationNumber!: string;
+  identificationNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  alias?: string;
 
   @IsString()
   fullName!: string;
@@ -98,6 +117,7 @@ class CustomersService {
     const where: Prisma.CustomerWhereInput = search
       ? {
           OR: [
+            { alias: { contains: search, mode: 'insensitive' } },
             { fullName: { contains: search, mode: 'insensitive' } },
             { identificationNumber: { contains: search, mode: 'insensitive' } },
             { phone: { contains: search, mode: 'insensitive' } },
@@ -106,21 +126,23 @@ class CustomersService {
         }
       : {};
 
-    const [items, totalItems, activeCustomers] = await this.prisma.$transaction([
-      this.prisma.customer.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.customer.count({ where }),
-      this.prisma.customer.count({
-        where: {
-          ...where,
-          isActive: true,
-        },
-      }),
-    ]);
+    const [items, totalItems, activeCustomers] = await this.prisma.$transaction(
+      [
+        this.prisma.customer.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        this.prisma.customer.count({ where }),
+        this.prisma.customer.count({
+          where: {
+            ...where,
+            isActive: true,
+          },
+        }),
+      ],
+    );
 
     return {
       items,
@@ -142,10 +164,11 @@ class CustomersService {
       this.prisma.customer.create({
         data: {
           address: dto.address,
+          alias: this.optionalText(dto.alias),
           email: dto.email,
           fullName: dto.fullName,
-          identificationNumber: dto.identificationNumber,
-          identificationType: dto.identificationType,
+          identificationNumber: this.optionalText(dto.identificationNumber),
+          identificationType: this.optionalText(dto.identificationType),
           phone: dto.phone,
         },
       }),
@@ -160,10 +183,11 @@ class CustomersService {
         where: { id },
         data: {
           address: dto.address,
+          alias: this.optionalText(dto.alias),
           email: dto.email,
           fullName: dto.fullName,
-          identificationNumber: dto.identificationNumber,
-          identificationType: dto.identificationType,
+          identificationNumber: this.optionalText(dto.identificationNumber),
+          identificationType: this.optionalText(dto.identificationType),
           phone: dto.phone,
           updatedAt: new Date(),
         },
@@ -217,6 +241,10 @@ class CustomersService {
 
       throw error;
     }
+  }
+
+  private optionalText(value?: string) {
+    return value?.trim() || null;
   }
 }
 

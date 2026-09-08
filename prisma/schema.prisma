@@ -194,8 +194,9 @@ model Barcode {
 
 model Customer {
   id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  identificationType   String        @map("identification_type") @db.VarChar(20)
-  identificationNumber String        @unique @map("identification_number") @db.VarChar(30)
+  alias                String?       @db.VarChar(100)
+  identificationType   String?       @map("identification_type") @db.VarChar(20)
+  identificationNumber String?       @unique @map("identification_number") @db.VarChar(30)
   fullName             String        @map("full_name") @db.VarChar(150)
   address              String?       @db.VarChar(250)
   email                String?       @db.VarChar(150)
