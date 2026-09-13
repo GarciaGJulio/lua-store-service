@@ -3,14 +3,20 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Injectable,
   Module,
   Param,
   Patch,
   Post,
+  Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
+import { AuthGuard } from '@nestjs/passport';
+import type { Request } from 'express';
 import { IsDateString, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PrismaService } from '@/database/prisma.service';
 import { getEcuadorBusinessDayKey } from './business-time';
@@ -62,6 +68,14 @@ class CloseCashRegisterDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+class CashReportQueryDto {
+  @IsDateString()
+  dateFrom!: string;
+
+  @IsDateString()
+  dateTo!: string;
 }
 
 type InvoiceSummaryRow = {
@@ -133,6 +147,76 @@ type RegisterState = {
 @Injectable()
 export class CashService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async getPeriodReport(dateFrom: string, dateTo: string) {
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    if (!datePattern.test(dateFrom) || !datePattern.test(dateTo) ||
+        !Number.isFinite(Date.parse(`${dateFrom}T00:00:00.000Z`)) ||
+        !Number.isFinite(Date.parse(`${dateTo}T00:00:00.000Z`)) ||
+        new Date(`${dateFrom}T00:00:00.000Z`).toISOString().slice(0, 10) !== dateFrom ||
+        new Date(`${dateTo}T00:00:00.000Z`).toISOString().slice(0, 10) !== dateTo ||
+        dateFrom > dateTo) {
+      throw new BadRequestException('Ingresa un rango de fechas valido.');
+    }
+
+    const range = {
+      gte: new Date(`${dateFrom}T00:00:00.000Z`),
+      lte: new Date(`${dateTo}T00:00:00.000Z`),
+    };
+    const [closures, cashExpenses, storePayments] = await Promise.all([
+      this.prisma.cashClosure.findMany({
+        where: { closureDate: range },
+        include: { cashRegister: { select: { name: true } } },
+        orderBy: [{ closureDate: 'asc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.cashExpense.findMany({
+        where: { expenseDate: range },
+        include: { cashRegister: { select: { name: true } } },
+        orderBy: [{ expenseDate: 'asc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.storePayment.findMany({
+        where: { paymentDate: range },
+        orderBy: [{ paymentDate: 'asc' }, { createdAt: 'asc' }],
+      }),
+    ]);
+    const sum = (values: number[]) => Number(values.reduce((total, value) => total + value, 0).toFixed(2));
+    return {
+      dateFrom,
+      dateTo,
+      closures: closures.map((closure) => ({
+        id: closure.id,
+        date: closure.closureDate,
+        registerName: closure.cashRegister.name,
+        expectedCashTotal: Number(closure.expectedCashTotal),
+        countedCashTotal: Number(closure.countedCashTotal),
+        expectedBankTotal: Number(closure.expectedBankTotal ?? 0),
+        countedBankTotal: Number(closure.countedBankTotal ?? 0),
+        expensesTotal: Number(closure.expensesTotal),
+        differenceAmount: Number(closure.totalDifferenceAmount ?? closure.differenceAmount),
+      })),
+      cashExpenses: cashExpenses.map((expense) => ({
+        id: expense.id,
+        date: expense.expenseDate,
+        registerName: expense.cashRegister.name,
+        detail: expense.detail,
+        amount: Number(expense.amount),
+      })),
+      storePayments: storePayments.map((payment) => ({
+        id: payment.id,
+        date: payment.paymentDate,
+        detail: payment.detail,
+        amount: Number(payment.amount),
+      })),
+      totals: {
+        expectedCash: sum(closures.map((item) => Number(item.expectedCashTotal))),
+        countedCash: sum(closures.map((item) => Number(item.countedCashTotal))),
+        expectedBank: sum(closures.map((item) => Number(item.expectedBankTotal ?? 0))),
+        countedBank: sum(closures.map((item) => Number(item.countedBankTotal ?? 0))),
+        cashExpenses: sum(cashExpenses.map((item) => Number(item.amount))),
+        storePayments: sum(storePayments.map((item) => Number(item.amount))),
+      },
+    };
+  }
 
   async findRegisters() {
     const registers = await this.prisma.cashRegister.findMany({
@@ -764,6 +848,18 @@ export class CashService {
 @Controller('cash')
 class CashController {
   constructor(private readonly cashService: CashService) {}
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('report')
+  getPeriodReport(
+    @Req() request: Request & { user: { role: UserRole } },
+    @Query() query: CashReportQueryDto,
+  ) {
+    if (request.user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Solo el administrador puede consultar este reporte.');
+    }
+    return this.cashService.getPeriodReport(query.dateFrom, query.dateTo);
+  }
 
   @Get('registers')
   findRegisters() {
