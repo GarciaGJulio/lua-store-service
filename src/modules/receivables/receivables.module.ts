@@ -67,7 +67,7 @@ type SequencedDocument = {
 };
 
 @Injectable()
-class ReceivablesService {
+export class ReceivablesService {
   constructor(private readonly prisma: PrismaService) {}
 
   findAll() {
@@ -132,10 +132,18 @@ class ReceivablesService {
     }
 
     return this.prisma.$transaction(async (transaction) => {
+      // Serialize with returns on the invoice, then with other payments on the debt.
+      const source = await transaction.receivable.findUnique({
+        where: { id: receivableId },
+        select: { invoiceId: true },
+      });
+      if (source?.invoiceId)
+        await transaction.$queryRaw`SELECT id FROM invoices WHERE id = ${source.invoiceId}::uuid FOR UPDATE`;
+      await transaction.$queryRaw`SELECT id FROM accounts_receivable WHERE id = ${receivableId}::uuid FOR UPDATE`;
       const receivable = await transaction.receivable.findUnique({
         where: { id: receivableId },
         include: {
-          invoice: true,
+          invoice: { include: { returns: true } },
           payments: true,
         },
       });
@@ -144,13 +152,29 @@ class ReceivablesService {
         throw new BadRequestException('Cuenta por cobrar no encontrada.');
       }
 
+      if (receivable.invoice?.returns.some((row) => !row.operationId)) {
+        throw new BadRequestException(
+          'La factura tiene devoluciones historicas pendientes de conciliacion.',
+        );
+      }
+      if (
+        receivable.invoice?.returnStatus === 'TOTAL' ||
+        receivable.invoice?.status === InvoiceStatus.VOIDED
+      ) {
+        throw new BadRequestException(
+          'La factura ya fue anulada o devuelta completamente.',
+        );
+      }
+
       const registeredPaymentsTotal = Number(
         receivable.payments
           .reduce((sum, payment) => sum + Number(payment.amount), 0)
           .toFixed(2),
       );
 
-      if (Math.abs(registeredPaymentsTotal - Number(receivable.paidAmount)) > 0.01) {
+      if (
+        Math.abs(registeredPaymentsTotal - Number(receivable.paidAmount)) > 0.01
+      ) {
         throw new BadRequestException(
           'La cuenta tiene abonos pendientes de conciliacion y no admite nuevos pagos.',
         );
@@ -171,14 +195,16 @@ class ReceivablesService {
         'RECEIVABLE_PAYMENT',
       );
 
-      const updatedRows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-        UPDATE public.accounts_receivable
+      const updatedRows = await transaction.$queryRaw<
+        Array<{ id: string }>
+      >(Prisma.sql`
+        UPDATE accounts_receivable
            SET paid_amount = paid_amount + ${dto.amount},
                pending_amount = pending_amount - ${dto.amount},
                status = CASE
                  WHEN pending_amount - ${dto.amount} = 0
-                   THEN 'PAID'::public.receivable_status
-                 ELSE 'PARTIAL'::public.receivable_status
+                   THEN 'PAID'::receivable_status
+                 ELSE 'PARTIAL'::receivable_status
                END,
                paid_at = CASE
                  WHEN pending_amount - ${dto.amount} = 0 THEN NOW()
@@ -187,7 +213,7 @@ class ReceivablesService {
                last_payment_at = NOW(),
                updated_at = NOW()
          WHERE id = ${receivableId}::uuid
-           AND status <> 'PAID'::public.receivable_status
+           AND status <> 'PAID'::receivable_status
            AND pending_amount >= ${dto.amount}
          RETURNING id
       `);
@@ -253,7 +279,7 @@ class ReceivablesService {
     const sequenceRows = await transaction.$queryRaw<
       Array<SequencedDocument>
     >(Prisma.sql`
-      UPDATE public.document_sequences
+      UPDATE document_sequences
          SET current_value = current_value + 1,
              updated_at = NOW()
        WHERE document_type = ${documentType}

@@ -1,3 +1,5 @@
+import { allocateReturnedLines } from '../returns/return-accounting';
+import { getEcuadorBusinessDayKey } from '../cash/business-time';
 import {
   BadRequestException,
   Body,
@@ -176,7 +178,7 @@ type InvoiceDiscountContext = {
 };
 
 @Injectable()
-class InvoicesService {
+export class InvoicesService {
   constructor(
     private readonly cashService: CashService,
     private readonly prisma: PrismaService,
@@ -200,37 +202,51 @@ class InvoicesService {
       },
     };
 
-    const [items, totalItems, aggregate] = await this.prisma.$transaction([
-      this.prisma.invoice.findMany({
-        orderBy: [{ issuedAt: 'desc' }, { createdAt: 'desc' }],
-        select: {
-          customerNameSnapshot: true,
-          id: true,
-          issuedAt: true,
-          sequential: true,
-          status: true,
-          total: true,
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        where,
-      }),
-      this.prisma.invoice.count({ where }),
-      this.prisma.invoice.aggregate({
-        _sum: { total: true },
-        where: validSalesWhere,
-      }),
-    ]);
+    const [items, totalItems, aggregate, activeCount] =
+      await this.prisma.$transaction([
+        this.prisma.invoice.findMany({
+          orderBy: [{ issuedAt: 'desc' }, { createdAt: 'desc' }],
+          select: {
+            customerNameSnapshot: true,
+            id: true,
+            issuedAt: true,
+            sequential: true,
+            status: true,
+            total: true,
+            returnStatus: true,
+            returnedTotal: true,
+          },
+          skip: (page - 1) * limit,
+          take: limit,
+          where,
+        }),
+        this.prisma.invoice.count({ where }),
+        this.prisma.invoice.aggregate({
+          _sum: { total: true, returnedTotal: true },
+          where: validSalesWhere,
+        }),
+        this.prisma.invoice.count({
+          where: { ...validSalesWhere, returnStatus: { not: 'TOTAL' } },
+        }),
+      ]);
 
     return {
       items: items.map((invoice) => ({
-        canVoid: invoice.status !== InvoiceStatus.VOIDED,
+        canVoid:
+          invoice.status !== InvoiceStatus.VOIDED &&
+          invoice.returnStatus === 'NONE',
         customerName: invoice.customerNameSnapshot,
         id: invoice.id,
         issuedAt: invoice.issuedAt,
         sequential: invoice.sequential,
         status: invoice.status,
         total: Number(invoice.total),
+        returnedTotal: Number(invoice.returnedTotal),
+        netTotal:
+          invoice.status === InvoiceStatus.VOIDED
+            ? 0
+            : Number(invoice.total) - Number(invoice.returnedTotal),
+        returnStatus: invoice.returnStatus,
       })),
       meta: {
         limit,
@@ -239,8 +255,10 @@ class InvoicesService {
         totalPages: Math.max(1, Math.ceil(totalItems / limit)),
       },
       summary: {
-        totalAmount: Number(aggregate._sum.total ?? 0),
-        totalSales: totalItems,
+        totalAmount:
+          Number(aggregate._sum.total ?? 0) -
+          Number(aggregate._sum.returnedTotal ?? 0),
+        totalSales: activeCount,
       },
     };
   }
@@ -264,11 +282,7 @@ class InvoicesService {
     const invoice = await this.voidInvoice(invoiceId, dto);
     const returnedQuantities = await this.getReturnedQuantities(invoice.id);
     const discountContext = await this.getInvoiceDiscountContext(invoice.id);
-    return this.mapInvoiceDetail(
-      invoice as InvoiceDetailsRecord,
-      returnedQuantities,
-      discountContext,
-    );
+    return this.mapInvoiceDetail(invoice, returnedQuantities, discountContext);
   }
 
   async create(dto: CreateInvoiceDto) {
@@ -650,6 +664,7 @@ class InvoicesService {
 
   async voidInvoice(invoiceId: string, dto: VoidInvoiceDto) {
     return this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`SELECT id FROM invoices WHERE id = ${invoiceId}::uuid FOR UPDATE`;
       const reason = dto.reason.trim();
 
       if (!reason) {
@@ -662,6 +677,7 @@ class InvoicesService {
         where: { id: invoiceId },
         include: {
           cancellation: true,
+          returns: true,
           lines: true,
           receivable: {
             include: {
@@ -678,6 +694,11 @@ class InvoicesService {
       if (invoice.status === InvoiceStatus.VOIDED || invoice.cancellation) {
         throw new BadRequestException('La factura ya fue anulada.');
       }
+
+      if (invoice.returns.length)
+        throw new BadRequestException(
+          'No puedes anular una factura con devoluciones. Devuelve las unidades restantes.',
+        );
 
       if (invoice.receivable?.payments.length) {
         throw new BadRequestException(
@@ -718,6 +739,10 @@ class InvoicesService {
         });
       }
 
+      await transaction.invoice.update({
+        where: { id: invoiceId },
+        data: { status: InvoiceStatus.VOIDED },
+      });
       await transaction.invoiceCancellation.create({
         data: {
           invoiceId,
@@ -802,7 +827,7 @@ class InvoicesService {
       );
     }
 
-    const today = this.normalizeDayStart(new Date().toISOString());
+    const today = new Date(`${getEcuadorBusinessDayKey()}T00:00:00.000Z`);
 
     if (
       !coupon.isActive ||
@@ -891,19 +916,14 @@ class InvoicesService {
   }
 
   private async getReturnedQuantities(invoiceId: string) {
-    const rows = await this.prisma.storeReturn.groupBy({
-      by: ['variantId'],
-      where: {
-        invoiceId,
-      },
-      _sum: {
-        quantity: true,
-      },
-    });
-
-    return new Map(
-      rows.map((row) => [row.variantId, Number(row._sum.quantity ?? 0)]),
-    );
+    const [lines, returns] = await Promise.all([
+      this.prisma.invoiceLine.findMany({ where: { invoiceId } }),
+      this.prisma.storeReturn.findMany({
+        where: { invoiceId },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+    return allocateReturnedLines(lines, returns);
   }
 
   private async getInvoiceDiscountContext(
@@ -1099,7 +1119,10 @@ class InvoicesService {
 
   private mapInvoiceDetail(
     invoice: InvoiceDetailsRecord,
-    returnedQuantities = new Map<string, number>(),
+    returnedQuantities = new Map<
+      string,
+      { quantity: number; amount: number }
+    >(),
     discountContext: InvoiceDiscountContext = {
       cartCoupon: null,
       linesByVariantId: new Map(),
@@ -1108,13 +1131,17 @@ class InvoicesService {
   ) {
     const receivablePaymentsCount = invoice.receivable?.payments.length ?? 0;
     const canVoid =
-      invoice.status !== InvoiceStatus.VOIDED && receivablePaymentsCount === 0;
+      invoice.status !== InvoiceStatus.VOIDED &&
+      invoice.returnStatus === 'NONE' &&
+      receivablePaymentsCount === 0;
     const voidBlockedReason =
       invoice.status === InvoiceStatus.VOIDED
         ? 'El comprobante ya fue anulado.'
-        : receivablePaymentsCount > 0
-          ? 'No se puede anular porque ya registra abonos de cartera.'
-          : null;
+        : invoice.returnStatus !== 'NONE'
+          ? 'La factura tiene devoluciones; usa el flujo de devolucion para las unidades restantes.'
+          : receivablePaymentsCount > 0
+            ? 'No se puede anular porque ya registra abonos de cartera.'
+            : null;
 
     return {
       canVoid,
@@ -1137,6 +1164,8 @@ class InvoicesService {
       issuedAt: invoice.issuedAt,
       cartCoupon: discountContext.cartCoupon,
       lines: invoice.lines.map((line) => ({
+        id: line.id,
+        returnedAmount: returnedQuantities.get(line.id)?.amount ?? 0,
         barcode: line.barcode,
         cartDiscount:
           discountContext.linesByVariantId.get(line.variantId)?.cartDiscount ??
@@ -1156,9 +1185,9 @@ class InvoicesService {
         quantity: line.quantity,
         returnableQuantity: Math.max(
           0,
-          line.quantity - (returnedQuantities.get(line.variantId) ?? 0),
+          line.quantity - (returnedQuantities.get(line.id)?.quantity ?? 0),
         ),
-        returnedQuantity: returnedQuantities.get(line.variantId) ?? 0,
+        returnedQuantity: returnedQuantities.get(line.id)?.quantity ?? 0,
         sizeLabel: line.variant.sizeLabel,
         taxRate: Number(line.taxRate),
         unitPrice: Number(line.unitPrice),
@@ -1175,6 +1204,7 @@ class InvoicesService {
             balance: Number(invoice.receivable.balance),
             originalAmount: Number(invoice.receivable.originalAmount),
             paidAmount: Number(invoice.receivable.paidAmount),
+            returnedAmount: Number(invoice.receivable.returnedAmount),
             paymentsCount: receivablePaymentsCount,
             status: invoice.receivable.status,
           }
@@ -1184,6 +1214,12 @@ class InvoicesService {
       subtotal: Number(invoice.subtotal),
       taxTotal: Number(invoice.taxTotal),
       total: Number(invoice.total),
+      returnedTotal: Number(invoice.returnedTotal),
+      netTotal:
+        invoice.status === InvoiceStatus.VOIDED
+          ? 0
+          : Number(invoice.total) - Number(invoice.returnedTotal),
+      returnStatus: invoice.returnStatus,
       totalDiscount: discountContext.totalDiscount,
       voidBlockedReason,
     };
@@ -1194,7 +1230,7 @@ class InvoicesService {
     const year = date.getUTCFullYear();
     const month = String(date.getUTCMonth() + 1).padStart(2, '0');
     const day = String(date.getUTCDate()).padStart(2, '0');
-    return new Date(`${year}-${month}-${day}T00:00:00.000Z`);
+    return new Date(`${year}-${month}-${day}T05:00:00.000Z`);
   }
 
   private normalizeDayEnd(value: string) {
@@ -1202,7 +1238,11 @@ class InvoicesService {
     const year = date.getUTCFullYear();
     const month = String(date.getUTCMonth() + 1).padStart(2, '0');
     const day = String(date.getUTCDate()).padStart(2, '0');
-    return new Date(`${year}-${month}-${day}T23:59:59.999Z`);
+    return new Date(
+      new Date(`${year}-${month}-${day}T05:00:00.000Z`).getTime() +
+        86_400_000 -
+        1,
+    );
   }
 
   private async getNextDocumentNumber(
@@ -1212,7 +1252,7 @@ class InvoicesService {
     const sequenceRows = await transaction.$queryRaw<
       Array<SequencedDocument>
     >(Prisma.sql`
-      UPDATE public.document_sequences
+      UPDATE document_sequences
          SET current_value = current_value + 1,
              updated_at = NOW()
        WHERE document_type = ${documentType}

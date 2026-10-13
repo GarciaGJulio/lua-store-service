@@ -13,6 +13,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Type } from 'class-transformer';
 import { Prisma, UserRole } from '@prisma/client';
 import type { Request } from 'express';
+import { getEcuadorBusinessDayKey } from '../cash/business-time';
 import {
   IsDateString,
   IsInt,
@@ -105,6 +106,7 @@ type DailyReturnsRow = {
   day_key: Date | string;
   returns_margin_total: Prisma.Decimal | number | null;
   returns_total: Prisma.Decimal | number | null;
+  returns_quantity: bigint | number | null;
 };
 
 type MonthlySalesRow = {
@@ -119,6 +121,7 @@ type MonthlyReturnsRow = {
   month_key: Date | string;
   returns_margin_total: Prisma.Decimal | number | null;
   returns_total: Prisma.Decimal | number | null;
+  returns_quantity: bigint | number | null;
 };
 
 type PaymentMethodRow = {
@@ -214,7 +217,7 @@ const paymentMethodLabels: Record<string, string> = {
 };
 
 @Injectable()
-class AnalyticsService {
+export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getDashboard(query: AnalyticsDashboardQueryDto) {
@@ -265,18 +268,30 @@ class AnalyticsService {
     ]);
 
     const grossSales = this.toNumber(salesAggregate[0]?.sales_total);
-    const unitsSold = this.toInteger(salesAggregate[0]?.units_sold);
+    const grossUnitsSold = this.toInteger(salesAggregate[0]?.units_sold);
     const grossMargin = this.toNumber(salesAggregate[0]?.gross_margin);
     const invoiceCount = this.toInteger(issuedInvoiceCount[0]?.invoices_count);
     const returnsTotal = this.toNumber(returnsAggregate[0]?.returns_total);
-    const returnsMarginTotal = this.toNumber(returnsAggregate[0]?.returns_margin_total);
-    const returnsQuantity = this.toInteger(returnsAggregate[0]?.returns_quantity);
-    const pendingBalance = this.toNumber(receivablesSummaryRows[0]?.pending_balance);
-    const openReceivablesCount = this.toInteger(receivablesSummaryRows[0]?.open_count);
-    const collectionsTotal = this.toNumber(receivableCollectionsRows[0]?.collections_total);
+    const returnsMarginTotal = this.toNumber(
+      returnsAggregate[0]?.returns_margin_total,
+    );
+    const returnsQuantity = this.toInteger(
+      returnsAggregate[0]?.returns_quantity,
+    );
+    const unitsSold = grossUnitsSold - returnsQuantity;
+    const pendingBalance = this.toNumber(
+      receivablesSummaryRows[0]?.pending_balance,
+    );
+    const openReceivablesCount = this.toInteger(
+      receivablesSummaryRows[0]?.open_count,
+    );
+    const collectionsTotal = this.toNumber(
+      receivableCollectionsRows[0]?.collections_total,
+    );
     const netSales = this.roundCurrency(grossSales - returnsTotal);
     const netGrossMargin = this.roundCurrency(grossMargin - returnsMarginTotal);
-    const averageTicket = invoiceCount > 0 ? this.roundCurrency(netSales / invoiceCount) : 0;
+    const averageTicket =
+      invoiceCount > 0 ? this.roundCurrency(netSales / invoiceCount) : 0;
 
     return {
       customers: {
@@ -303,7 +318,9 @@ class AnalyticsService {
         slowProducts: slowProductsRows.map((row) => ({
           categoryName: row.category_name,
           daysWithoutSale: this.getDaysBetween(row.reference_date),
-          lastSoldAt: row.last_sold_at ? this.toIsoString(row.last_sold_at) : null,
+          lastSoldAt: row.last_sold_at
+            ? this.toIsoString(row.last_sold_at)
+            : null,
           productId: row.product_id,
           productName: row.product_name,
           productSku: row.product_sku,
@@ -315,7 +332,9 @@ class AnalyticsService {
           categoryName: row.category_name,
           colorLabel: row.color_label,
           daysWithoutSale: this.getDaysBetween(row.reference_date),
-          lastSoldAt: row.last_sold_at ? this.toIsoString(row.last_sold_at) : null,
+          lastSoldAt: row.last_sold_at
+            ? this.toIsoString(row.last_sold_at)
+            : null,
           productName: row.product_name,
           productSku: row.product_sku,
           sizeLabel: row.size_label,
@@ -346,7 +365,9 @@ class AnalyticsService {
         returnsQuantity,
         returnsTotal,
         unitsSold,
-        voidedInvoicesCount: this.toInteger(voidedInvoiceCount[0]?.invoices_count),
+        voidedInvoicesCount: this.toInteger(
+          voidedInvoiceCount[0]?.invoices_count,
+        ),
       },
       receivables: {
         collectionsTotal,
@@ -355,7 +376,11 @@ class AnalyticsService {
       },
       sales: {
         daily: this.buildDailySeries(filters, dailySalesRows, dailyReturnsRows),
-        monthly: this.buildMonthlySeries(filters, monthlySalesRows, monthlyReturnsRows),
+        monthly: this.buildMonthlySeries(
+          filters,
+          monthlySalesRows,
+          monthlyReturnsRows,
+        ),
         paymentMethods: this.buildPaymentMethods(paymentMethodRows),
       },
     };
@@ -367,13 +392,15 @@ class AnalyticsService {
 
   async getInventoryValuation(query: AnalyticsDashboardQueryDto) {
     const filters = this.normalizeFilters(query);
-    const rows = await this.prisma.$queryRaw<Array<InventoryValuationRow>>(Prisma.sql`
+    const rows = await this.prisma.$queryRaw<
+      Array<InventoryValuationRow>
+    >(Prisma.sql`
       SELECT
         COALESCE(SUM(pv.stock), 0) AS units_available,
         COALESCE(SUM(pv.stock * pv.cost), 0) AS inventory_cost,
         COALESCE(SUM(pv.stock * pv.price), 0) AS potential_sales
-        FROM public.product_variants pv
-        INNER JOIN public.products p
+        FROM product_variants pv
+        INNER JOIN products p
                 ON p.id = pv.product_id
        WHERE pv.stock > 0
          AND pv.is_active = TRUE
@@ -403,14 +430,14 @@ class AnalyticsService {
         COALESCE(SUM(il.line_total), 0) AS sales_total,
         COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin,
         COUNT(DISTINCT i.id) AS invoices_count
-        FROM public.invoices i
-        INNER JOIN public.invoice_items il
+        FROM invoices i
+        INNER JOIN invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN public.product_variants pv
+        INNER JOIN product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN public.products p
+        INNER JOIN products p
                 ON p.id = il.product_id
-       WHERE i.status <> 'CANCELLED'::public.invoice_status
+       WHERE i.status <> 'CANCELLED'::invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
@@ -423,26 +450,31 @@ class AnalyticsService {
         COALESCE(SUM(sr.refunded_total), 0) AS returns_total,
         COALESCE(SUM(sr.quantity), 0) AS returns_quantity,
         COALESCE(SUM((sr.refunded_unit_price - pv.cost) * sr.quantity), 0) AS returns_margin_total
-        FROM public.store_returns sr
-        INNER JOIN public.product_variants pv
+        FROM store_returns sr
+        INNER JOIN product_variants pv
                 ON pv.id = sr.variant_id
-        INNER JOIN public.products p
+        INNER JOIN products p
                 ON p.id = sr.product_id
-       WHERE sr.return_date >= ${filters.startAt}
-         AND sr.return_date < ${filters.endExclusive}
+       WHERE sr.return_date >= ${filters.dateFrom}::date
+         AND sr.return_date <= ${filters.dateTo}::date
          ${this.buildProductScopeSql(filters)}
     `);
   }
 
-  private async getInvoiceCount(filters: AnalyticsFilters, onlyVoided: boolean) {
+  private async getInvoiceCount(
+    filters: AnalyticsFilters,
+    onlyVoided: boolean,
+  ) {
     return this.prisma.$queryRaw<Array<SalesAggregateRow>>(Prisma.sql`
       SELECT COUNT(DISTINCT i.id) AS invoices_count
-        FROM public.invoices i
+        FROM invoices i
        WHERE i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
-         AND i.status ${onlyVoided
-           ? Prisma.sql`= 'CANCELLED'::public.invoice_status`
-           : Prisma.sql`<> 'CANCELLED'::public.invoice_status`}
+         AND ${
+           onlyVoided
+             ? Prisma.sql`(i.status = 'CANCELLED'::invoice_status OR i.return_status = 'TOTAL')`
+             : Prisma.sql`i.status <> 'CANCELLED'::invoice_status AND i.return_status <> 'TOTAL'`
+         }
          ${this.buildInvoiceProductExistsSql(filters)}
     `);
   }
@@ -450,23 +482,23 @@ class AnalyticsService {
   private async getDailySalesRows(filters: AnalyticsFilters) {
     return this.prisma.$queryRaw<Array<DailySalesRow>>(Prisma.sql`
       SELECT
-        DATE(i.issue_date) AS day_key,
+        DATE(i.issue_date AT TIME ZONE 'America/Guayaquil') AS day_key,
         COALESCE(SUM(il.line_total), 0) AS sales_total,
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin
-        FROM public.invoices i
-        INNER JOIN public.invoice_items il
+        FROM invoices i
+        INNER JOIN invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN public.product_variants pv
+        INNER JOIN product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN public.products p
+        INNER JOIN products p
                 ON p.id = il.product_id
-       WHERE i.status <> 'CANCELLED'::public.invoice_status
+       WHERE i.status <> 'CANCELLED'::invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
-       GROUP BY DATE(i.issue_date)
-       ORDER BY DATE(i.issue_date) ASC
+       GROUP BY DATE(i.issue_date AT TIME ZONE 'America/Guayaquil')
+       ORDER BY DATE(i.issue_date AT TIME ZONE 'America/Guayaquil') ASC
     `);
   }
 
@@ -475,14 +507,15 @@ class AnalyticsService {
       SELECT
         DATE(sr.return_date) AS day_key,
         COALESCE(SUM(sr.refunded_total), 0) AS returns_total,
+        COALESCE(SUM(sr.quantity), 0) AS returns_quantity,
         COALESCE(SUM((sr.refunded_unit_price - pv.cost) * sr.quantity), 0) AS returns_margin_total
-        FROM public.store_returns sr
-        INNER JOIN public.product_variants pv
+        FROM store_returns sr
+        INNER JOIN product_variants pv
                 ON pv.id = sr.variant_id
-        INNER JOIN public.products p
+        INNER JOIN products p
                 ON p.id = sr.product_id
-       WHERE sr.return_date >= ${filters.startAt}
-         AND sr.return_date < ${filters.endExclusive}
+       WHERE sr.return_date >= ${filters.dateFrom}::date
+         AND sr.return_date <= ${filters.dateTo}::date
          ${this.buildProductScopeSql(filters)}
        GROUP BY DATE(sr.return_date)
        ORDER BY DATE(sr.return_date) ASC
@@ -492,24 +525,24 @@ class AnalyticsService {
   private async getMonthlySalesRows(filters: AnalyticsFilters) {
     return this.prisma.$queryRaw<Array<MonthlySalesRow>>(Prisma.sql`
       SELECT
-        DATE_TRUNC('month', i.issue_date) AS month_key,
+        DATE_TRUNC('month', i.issue_date AT TIME ZONE 'America/Guayaquil') AS month_key,
         COALESCE(SUM(il.line_total), 0) AS sales_total,
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin,
-        COUNT(DISTINCT i.id) AS invoice_count
-        FROM public.invoices i
-        INNER JOIN public.invoice_items il
+        COUNT(DISTINCT i.id) FILTER (WHERE i.return_status <> 'TOTAL') AS invoice_count
+        FROM invoices i
+        INNER JOIN invoice_items il
                 ON il.invoice_id = i.id
-        INNER JOIN public.product_variants pv
+        INNER JOIN product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN public.products p
+        INNER JOIN products p
                 ON p.id = il.product_id
-       WHERE i.status <> 'CANCELLED'::public.invoice_status
+       WHERE i.status <> 'CANCELLED'::invoice_status
          AND i.issue_date >= ${filters.startAt}
          AND i.issue_date < ${filters.endExclusive}
          ${this.buildProductScopeSql(filters)}
-       GROUP BY DATE_TRUNC('month', i.issue_date)
-       ORDER BY DATE_TRUNC('month', i.issue_date) ASC
+       GROUP BY DATE_TRUNC('month', i.issue_date AT TIME ZONE 'America/Guayaquil')
+       ORDER BY DATE_TRUNC('month', i.issue_date AT TIME ZONE 'America/Guayaquil') ASC
     `);
   }
 
@@ -518,18 +551,40 @@ class AnalyticsService {
       SELECT
         DATE_TRUNC('month', sr.return_date) AS month_key,
         COALESCE(SUM(sr.refunded_total), 0) AS returns_total,
+        COALESCE(SUM(sr.quantity), 0) AS returns_quantity,
         COALESCE(SUM((sr.refunded_unit_price - pv.cost) * sr.quantity), 0) AS returns_margin_total
-        FROM public.store_returns sr
-        INNER JOIN public.product_variants pv
+        FROM store_returns sr
+        INNER JOIN product_variants pv
                 ON pv.id = sr.variant_id
-        INNER JOIN public.products p
+        INNER JOIN products p
                 ON p.id = sr.product_id
-       WHERE sr.return_date >= ${filters.startAt}
-         AND sr.return_date < ${filters.endExclusive}
+       WHERE sr.return_date >= ${filters.dateFrom}::date
+         AND sr.return_date <= ${filters.dateTo}::date
          ${this.buildProductScopeSql(filters)}
        GROUP BY DATE_TRUNC('month', sr.return_date)
        ORDER BY DATE_TRUNC('month', sr.return_date) ASC
     `);
+  }
+
+  // Signed movements preserve the sale date and the actual return date.
+  private netSalesEventsSql(filters: AnalyticsFilters) {
+    return Prisma.sql`
+      SELECT i.id AS invoice_id, il.product_id, il.variant_id, il.quantity,
+             il.line_total, (il.unit_price - pv.cost) * il.quantity AS gross_margin
+        FROM invoices i JOIN invoice_items il ON il.invoice_id = i.id
+        JOIN products p ON p.id = il.product_id
+        JOIN product_variants pv ON pv.id = il.variant_id
+       WHERE i.status <> 'CANCELLED'::invoice_status
+         AND i.issue_date >= ${filters.startAt} AND i.issue_date < ${filters.endExclusive}
+         ${this.buildProductScopeSql(filters)}
+      UNION ALL
+      SELECT sr.invoice_id, sr.product_id, sr.variant_id, -sr.quantity,
+             -sr.refunded_total, -(sr.refunded_total - pv.cost * sr.quantity)
+        FROM store_returns sr JOIN products p ON p.id = sr.product_id
+        JOIN product_variants pv ON pv.id = sr.variant_id
+       WHERE sr.return_date >= ${filters.dateFrom}::date AND sr.return_date <= ${filters.dateTo}::date
+         ${this.buildProductScopeSql(filters)}
+    `;
   }
 
   private async getPaymentMethodRows(filters: AnalyticsFilters) {
@@ -539,14 +594,11 @@ class AnalyticsService {
           i.id AS invoice_id,
           i.total AS invoice_total,
           COALESCE(SUM(il.line_total), 0) AS scoped_total
-          FROM public.invoices i
-          INNER JOIN public.invoice_items il
-                  ON il.invoice_id = i.id
-          INNER JOIN public.products p
+          FROM (${this.netSalesEventsSql(filters)}) il
+        INNER JOIN invoices i ON i.id = il.invoice_id
+          INNER JOIN products p
                   ON p.id = il.product_id
-         WHERE i.status <> 'CANCELLED'::public.invoice_status
-           AND i.issue_date >= ${filters.startAt}
-           AND i.issue_date < ${filters.endExclusive}
+         WHERE i.status <> 'CANCELLED'::invoice_status
            ${this.buildProductScopeSql(filters)}
          GROUP BY i.id, i.total
       )
@@ -562,7 +614,7 @@ class AnalyticsService {
           0
         ) AS amount_total
         FROM scoped_invoices si
-        INNER JOIN public.invoice_payments ip
+        INNER JOIN invoice_payments ip
                 ON ip.invoice_id = si.invoice_id
        GROUP BY ip.payment_method
     `);
@@ -581,26 +633,26 @@ class AnalyticsService {
         s.name AS subcategory_name,
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM(il.line_total), 0) AS revenue_total,
-        COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin
-        FROM public.invoices i
-        INNER JOIN public.invoice_items il
-                ON il.invoice_id = i.id
-        INNER JOIN public.products p
+        COALESCE(SUM(il.gross_margin), 0) AS gross_margin
+        FROM (${this.netSalesEventsSql(filters)}) il
+        INNER JOIN invoices i ON i.id = il.invoice_id
+        INNER JOIN products p
                 ON p.id = il.product_id
-        INNER JOIN public.product_variants pv
+        INNER JOIN product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN public.categories c
+        INNER JOIN categories c
                 ON c.id = p.category_id
-        INNER JOIN public.subcategories s
+        INNER JOIN subcategories s
                 ON s.id = p.subcategory_id
-       WHERE i.status <> 'CANCELLED'::public.invoice_status
-         AND i.issue_date >= ${filters.startAt}
-         AND i.issue_date < ${filters.endExclusive}
+       WHERE i.status <> 'CANCELLED'::invoice_status
          ${this.buildProductScopeSql(filters)}
        GROUP BY p.id, p.internal_code, p.name, c.name, s.name
-       ORDER BY ${metric === 'units'
-         ? Prisma.sql`units_sold DESC`
-         : Prisma.sql`revenue_total DESC`}, product_name ASC
+       HAVING SUM(il.line_total) > 0 OR SUM(il.quantity) > 0
+       ORDER BY ${
+         metric === 'units'
+           ? Prisma.sql`units_sold DESC`
+           : Prisma.sql`revenue_total DESC`
+       }, product_name ASC
        LIMIT ${filters.topLimit}
     `);
   }
@@ -621,28 +673,28 @@ class AnalyticsService {
         b.code AS barcode,
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM(il.line_total), 0) AS revenue_total,
-        COALESCE(SUM((il.unit_price - pv.cost) * il.quantity), 0) AS gross_margin
-        FROM public.invoices i
-        INNER JOIN public.invoice_items il
-                ON il.invoice_id = i.id
-        INNER JOIN public.product_variants pv
+        COALESCE(SUM(il.gross_margin), 0) AS gross_margin
+        FROM (${this.netSalesEventsSql(filters)}) il
+        INNER JOIN invoices i ON i.id = il.invoice_id
+        INNER JOIN product_variants pv
                 ON pv.id = il.variant_id
-        INNER JOIN public.products p
+        INNER JOIN products p
                 ON p.id = pv.product_id
-        INNER JOIN public.barcodes b
+        INNER JOIN barcodes b
                 ON b.id = pv.barcode_id
-        INNER JOIN public.categories c
+        INNER JOIN categories c
                 ON c.id = p.category_id
-        INNER JOIN public.subcategories s
+        INNER JOIN subcategories s
                 ON s.id = p.subcategory_id
-       WHERE i.status <> 'CANCELLED'::public.invoice_status
-         AND i.issue_date >= ${filters.startAt}
-         AND i.issue_date < ${filters.endExclusive}
+       WHERE i.status <> 'CANCELLED'::invoice_status
          ${this.buildProductScopeSql(filters)}
        GROUP BY pv.id, p.internal_code, p.name, c.name, s.name, pv.size_label, pv.color_label, b.code
-       ORDER BY ${metric === 'units'
-         ? Prisma.sql`units_sold DESC`
-         : Prisma.sql`revenue_total DESC`}, product_name ASC
+       HAVING SUM(il.line_total) > 0 OR SUM(il.quantity) > 0
+       ORDER BY ${
+         metric === 'units'
+           ? Prisma.sql`units_sold DESC`
+           : Prisma.sql`revenue_total DESC`
+       }, product_name ASC
        LIMIT ${filters.topLimit}
     `);
   }
@@ -658,16 +710,16 @@ class AnalyticsService {
         p.total_stock AS stock_total,
         MAX(i.issue_date) AS last_sold_at,
         COALESCE(MAX(i.issue_date), p.created_at) AS reference_date
-        FROM public.products p
-        INNER JOIN public.categories c
+        FROM products p
+        INNER JOIN categories c
                 ON c.id = p.category_id
-        INNER JOIN public.subcategories s
+        INNER JOIN subcategories s
                 ON s.id = p.subcategory_id
-        LEFT JOIN public.invoice_items il
+        LEFT JOIN invoice_items il
                ON il.product_id = p.id
-        LEFT JOIN public.invoices i
+        LEFT JOIN invoices i
                ON i.id = il.invoice_id
-              AND i.status <> 'CANCELLED'::public.invoice_status
+              AND i.status <> 'CANCELLED'::invoice_status
        WHERE p.total_stock > 0
          ${this.buildProductScopeSql(filters)}
        GROUP BY p.id, p.internal_code, p.name, c.name, s.name, p.total_stock, p.created_at
@@ -690,20 +742,20 @@ class AnalyticsService {
         pv.stock AS stock_total,
         MAX(i.issue_date) AS last_sold_at,
         COALESCE(MAX(i.issue_date), pv.created_at) AS reference_date
-        FROM public.product_variants pv
-        INNER JOIN public.products p
+        FROM product_variants pv
+        INNER JOIN products p
                 ON p.id = pv.product_id
-        INNER JOIN public.barcodes b
+        INNER JOIN barcodes b
                 ON b.id = pv.barcode_id
-        INNER JOIN public.categories c
+        INNER JOIN categories c
                 ON c.id = p.category_id
-        INNER JOIN public.subcategories s
+        INNER JOIN subcategories s
                 ON s.id = p.subcategory_id
-        LEFT JOIN public.invoice_items il
+        LEFT JOIN invoice_items il
                ON il.variant_id = pv.id
-        LEFT JOIN public.invoices i
+        LEFT JOIN invoices i
                ON i.id = il.invoice_id
-              AND i.status <> 'CANCELLED'::public.invoice_status
+              AND i.status <> 'CANCELLED'::invoice_status
        WHERE pv.stock > 0
          ${this.buildProductScopeSql(filters)}
        GROUP BY pv.id, p.internal_code, p.name, c.name, s.name, pv.size_label, pv.color_label, b.code, pv.stock, pv.created_at
@@ -712,7 +764,10 @@ class AnalyticsService {
     `);
   }
 
-  private async getStockRows(filters: AnalyticsFilters, onlyOutOfStock: boolean) {
+  private async getStockRows(
+    filters: AnalyticsFilters,
+    onlyOutOfStock: boolean,
+  ) {
     return this.prisma.$queryRaw<Array<StockRow>>(Prisma.sql`
       SELECT
         pv.id AS variant_id,
@@ -724,18 +779,20 @@ class AnalyticsService {
         pv.color_label,
         b.code AS barcode,
         pv.stock AS stock_total
-        FROM public.product_variants pv
-        INNER JOIN public.products p
+        FROM product_variants pv
+        INNER JOIN products p
                 ON p.id = pv.product_id
-        INNER JOIN public.barcodes b
+        INNER JOIN barcodes b
                 ON b.id = pv.barcode_id
-        INNER JOIN public.categories c
+        INNER JOIN categories c
                 ON c.id = p.category_id
-        INNER JOIN public.subcategories s
+        INNER JOIN subcategories s
                 ON s.id = p.subcategory_id
-       WHERE pv.stock ${onlyOutOfStock
-         ? Prisma.sql`= 0`
-         : Prisma.sql`BETWEEN 1 AND ${filters.lowStockThreshold}`}
+       WHERE pv.stock ${
+         onlyOutOfStock
+           ? Prisma.sql`= 0`
+           : Prisma.sql`BETWEEN 1 AND ${filters.lowStockThreshold}`
+       }
          ${this.buildProductScopeSql(filters)}
        ORDER BY pv.stock ASC, product_name ASC
        LIMIT ${filters.topLimit}
@@ -748,21 +805,19 @@ class AnalyticsService {
         COALESCE(c.id::text, i.customer_name_snapshot) AS customer_key,
         COALESCE(c.full_name, i.customer_name_snapshot) AS customer_name,
         COALESCE(c.identification_number, i.customer_identification_snapshot) AS identification,
-        COUNT(DISTINCT i.id) AS invoices_count,
+        COUNT(DISTINCT i.id) FILTER (WHERE il.quantity > 0) AS invoices_count,
         COALESCE(SUM(il.quantity), 0) AS units_sold,
         COALESCE(SUM(il.line_total), 0) AS revenue_total
-        FROM public.invoices i
-        INNER JOIN public.invoice_items il
-                ON il.invoice_id = i.id
-        INNER JOIN public.products p
+        FROM (${this.netSalesEventsSql(filters)}) il
+        INNER JOIN invoices i ON i.id = il.invoice_id
+        INNER JOIN products p
                 ON p.id = il.product_id
-        LEFT JOIN public.customers c
+        LEFT JOIN customers c
                ON c.id = i.customer_id
-       WHERE i.status <> 'CANCELLED'::public.invoice_status
-         AND i.issue_date >= ${filters.startAt}
-         AND i.issue_date < ${filters.endExclusive}
+       WHERE i.status <> 'CANCELLED'::invoice_status
          ${this.buildProductScopeSql(filters)}
        GROUP BY COALESCE(c.id::text, i.customer_name_snapshot), COALESCE(c.full_name, i.customer_name_snapshot), COALESCE(c.identification_number, i.customer_identification_snapshot)
+       HAVING SUM(il.line_total) > 0 OR SUM(il.quantity) > 0
        ORDER BY revenue_total DESC, units_sold DESC
        LIMIT ${filters.topLimit}
     `);
@@ -773,10 +828,10 @@ class AnalyticsService {
       SELECT
         COUNT(DISTINCT ar.id) AS open_count,
         COALESCE(SUM(ar.pending_amount), 0) AS pending_balance
-        FROM public.accounts_receivable ar
-        INNER JOIN public.invoices i
+        FROM accounts_receivable ar
+        INNER JOIN invoices i
                 ON i.id = ar.invoice_id
-       WHERE ar.status IN ('PENDING'::public.receivable_status, 'PARTIAL'::public.receivable_status)
+       WHERE ar.status IN ('PENDING'::receivable_status, 'PARTIAL'::receivable_status)
          ${this.buildInvoiceProductExistsSql(filters)}
     `);
   }
@@ -785,10 +840,10 @@ class AnalyticsService {
     return this.prisma.$queryRaw<Array<ReceivableCollectionsRow>>(Prisma.sql`
       SELECT
         COALESCE(SUM(rp.amount), 0) AS collections_total
-        FROM public.receivable_payments rp
-        INNER JOIN public.accounts_receivable ar
+        FROM receivable_payments rp
+        INNER JOIN accounts_receivable ar
                 ON ar.id = rp.account_receivable_id
-        INNER JOIN public.invoices i
+        INNER JOIN invoices i
                 ON i.id = ar.invoice_id
        WHERE rp.paid_at >= ${filters.startAt}
          AND rp.paid_at < ${filters.endExclusive}
@@ -817,30 +872,36 @@ class AnalyticsService {
         {
           returnsMargin: this.toNumber(row.returns_margin_total),
           returnsTotal: this.toNumber(row.returns_total),
+          returnsQuantity: this.toInteger(row.returns_quantity),
         },
       ]),
     );
 
-    return this.buildDateSeries(filters.dateFrom, filters.dateTo).map((dateKey) => {
-      const sales = salesMap.get(dateKey) ?? {
-        grossMargin: 0,
-        grossSales: 0,
-        unitsSold: 0,
-      };
-      const returns = returnsMap.get(dateKey) ?? {
-        returnsMargin: 0,
-        returnsTotal: 0,
-      };
+    return this.buildDateSeries(filters.dateFrom, filters.dateTo).map(
+      (dateKey) => {
+        const sales = salesMap.get(dateKey) ?? {
+          grossMargin: 0,
+          grossSales: 0,
+          unitsSold: 0,
+        };
+        const returns = returnsMap.get(dateKey) ?? {
+          returnsMargin: 0,
+          returnsTotal: 0,
+          returnsQuantity: 0,
+        };
 
-      return {
-        date: dateKey,
-        grossMargin: this.roundCurrency(sales.grossMargin - returns.returnsMargin),
-        grossSales: sales.grossSales,
-        netSales: this.roundCurrency(sales.grossSales - returns.returnsTotal),
-        returnsTotal: returns.returnsTotal,
-        unitsSold: sales.unitsSold,
-      };
-    });
+        return {
+          date: dateKey,
+          grossMargin: this.roundCurrency(
+            sales.grossMargin - returns.returnsMargin,
+          ),
+          grossSales: sales.grossSales,
+          netSales: this.roundCurrency(sales.grossSales - returns.returnsTotal),
+          returnsTotal: returns.returnsTotal,
+          unitsSold: sales.unitsSold - returns.returnsQuantity,
+        };
+      },
+    );
   }
 
   private buildMonthlySeries(
@@ -865,32 +926,38 @@ class AnalyticsService {
         {
           returnsMargin: this.toNumber(row.returns_margin_total),
           returnsTotal: this.toNumber(row.returns_total),
+          returnsQuantity: this.toInteger(row.returns_quantity),
         },
       ]),
     );
 
-    return this.buildMonthSeries(filters.dateFrom, filters.dateTo).map((monthKey) => {
-      const sales = salesMap.get(monthKey) ?? {
-        grossMargin: 0,
-        grossSales: 0,
-        invoiceCount: 0,
-        unitsSold: 0,
-      };
-      const returns = returnsMap.get(monthKey) ?? {
-        returnsMargin: 0,
-        returnsTotal: 0,
-      };
+    return this.buildMonthSeries(filters.dateFrom, filters.dateTo).map(
+      (monthKey) => {
+        const sales = salesMap.get(monthKey) ?? {
+          grossMargin: 0,
+          grossSales: 0,
+          invoiceCount: 0,
+          unitsSold: 0,
+        };
+        const returns = returnsMap.get(monthKey) ?? {
+          returnsMargin: 0,
+          returnsTotal: 0,
+          returnsQuantity: 0,
+        };
 
-      return {
-        grossMargin: this.roundCurrency(sales.grossMargin - returns.returnsMargin),
-        grossSales: sales.grossSales,
-        invoiceCount: sales.invoiceCount,
-        month: monthKey,
-        netSales: this.roundCurrency(sales.grossSales - returns.returnsTotal),
-        returnsTotal: returns.returnsTotal,
-        unitsSold: sales.unitsSold,
-      };
-    });
+        return {
+          grossMargin: this.roundCurrency(
+            sales.grossMargin - returns.returnsMargin,
+          ),
+          grossSales: sales.grossSales,
+          invoiceCount: sales.invoiceCount,
+          month: monthKey,
+          netSales: this.roundCurrency(sales.grossSales - returns.returnsTotal),
+          returnsTotal: returns.returnsTotal,
+          unitsSold: sales.unitsSold - returns.returnsQuantity,
+        };
+      },
+    );
   }
 
   private buildPaymentMethods(rows: Array<PaymentMethodRow>) {
@@ -978,8 +1045,8 @@ class AnalyticsService {
     return Prisma.sql`
       AND EXISTS (
         SELECT 1
-          FROM public.invoice_items il
-          INNER JOIN public.products p
+          FROM invoice_items il
+          INNER JOIN products p
                   ON p.id = il.product_id
          WHERE il.invoice_id = i.id
            ${this.buildProductScopeSql(filters)}
@@ -987,7 +1054,9 @@ class AnalyticsService {
     `;
   }
 
-  private normalizeFilters(query: AnalyticsDashboardQueryDto): AnalyticsFilters {
+  private normalizeFilters(
+    query: AnalyticsDashboardQueryDto,
+  ): AnalyticsFilters {
     const todayKey = this.getTodayDateKey();
     const dateTo = query.dateTo?.slice(0, 10) ?? todayKey;
     const dateFrom =
@@ -1055,11 +1124,11 @@ class AnalyticsService {
   }
 
   private buildUtcDate(dateKey: string) {
-    return new Date(`${dateKey}T00:00:00.000Z`);
+    return new Date(`${dateKey}T05:00:00.000Z`);
   }
 
   private getTodayDateKey() {
-    return new Date().toISOString().slice(0, 10);
+    return getEcuadorBusinessDayKey();
   }
 
   private toDateKey(value: Date | string) {
@@ -1071,11 +1140,12 @@ class AnalyticsService {
   }
 
   private toIsoString(value: Date | string) {
-    return (typeof value === 'string' ? new Date(value) : value)
-      .toISOString();
+    return (typeof value === 'string' ? new Date(value) : value).toISOString();
   }
 
-  private toInteger(value: Prisma.Decimal | bigint | number | string | null | undefined) {
+  private toInteger(
+    value: Prisma.Decimal | bigint | number | string | null | undefined,
+  ) {
     if (typeof value === 'bigint') {
       return Number(value);
     }

@@ -17,7 +17,14 @@ import {
 import { Prisma, UserRole } from '@prisma/client';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request } from 'express';
-import { IsDateString, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { PrismaService } from '@/database/prisma.service';
 import { getEcuadorBusinessDayKey } from './business-time';
 import { calculateCashReconciliation } from './cash-reconciliation';
@@ -150,12 +157,17 @@ export class CashService {
 
   async getPeriodReport(dateFrom: string, dateTo: string) {
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-    if (!datePattern.test(dateFrom) || !datePattern.test(dateTo) ||
-        !Number.isFinite(Date.parse(`${dateFrom}T00:00:00.000Z`)) ||
-        !Number.isFinite(Date.parse(`${dateTo}T00:00:00.000Z`)) ||
-        new Date(`${dateFrom}T00:00:00.000Z`).toISOString().slice(0, 10) !== dateFrom ||
-        new Date(`${dateTo}T00:00:00.000Z`).toISOString().slice(0, 10) !== dateTo ||
-        dateFrom > dateTo) {
+    if (
+      !datePattern.test(dateFrom) ||
+      !datePattern.test(dateTo) ||
+      !Number.isFinite(Date.parse(`${dateFrom}T00:00:00.000Z`)) ||
+      !Number.isFinite(Date.parse(`${dateTo}T00:00:00.000Z`)) ||
+      new Date(`${dateFrom}T00:00:00.000Z`).toISOString().slice(0, 10) !==
+        dateFrom ||
+      new Date(`${dateTo}T00:00:00.000Z`).toISOString().slice(0, 10) !==
+        dateTo ||
+      dateFrom > dateTo
+    ) {
       throw new BadRequestException('Ingresa un rango de fechas valido.');
     }
 
@@ -163,7 +175,7 @@ export class CashService {
       gte: new Date(`${dateFrom}T00:00:00.000Z`),
       lte: new Date(`${dateTo}T00:00:00.000Z`),
     };
-    const [closures, cashExpenses, storePayments] = await Promise.all([
+    const [closures, cashExpenses, storePayments, refunds] = await Promise.all([
       this.prisma.cashClosure.findMany({
         where: { closureDate: range },
         include: { cashRegister: { select: { name: true } } },
@@ -178,8 +190,22 @@ export class CashService {
         where: { paymentDate: range },
         orderBy: [{ paymentDate: 'asc' }, { createdAt: 'asc' }],
       }),
+      this.prisma.returnOperation.findMany({
+        where: {
+          refundPaidAt: {
+            gte: new Date(`${dateFrom}T05:00:00.000Z`),
+            lt: new Date(
+              new Date(`${dateTo}T05:00:00.000Z`).getTime() + 86_400_000,
+            ),
+          },
+          refundCashRegisterId: { not: null },
+        },
+        include: { invoice: true, refundCashRegister: true },
+        orderBy: { refundPaidAt: 'asc' },
+      }),
     ]);
-    const sum = (values: number[]) => Number(values.reduce((total, value) => total + value, 0).toFixed(2));
+    const sum = (values: number[]) =>
+      Number(values.reduce((total, value) => total + value, 0).toFixed(2));
     return {
       dateFrom,
       dateTo,
@@ -192,7 +218,10 @@ export class CashService {
         expectedBankTotal: Number(closure.expectedBankTotal ?? 0),
         countedBankTotal: Number(closure.countedBankTotal ?? 0),
         expensesTotal: Number(closure.expensesTotal),
-        differenceAmount: Number(closure.totalDifferenceAmount ?? closure.differenceAmount),
+        refundsTotal: Number(closure.refundsTotal),
+        differenceAmount: Number(
+          closure.totalDifferenceAmount ?? closure.differenceAmount,
+        ),
       })),
       cashExpenses: cashExpenses.map((expense) => ({
         id: expense.id,
@@ -201,6 +230,14 @@ export class CashService {
         detail: expense.detail,
         amount: Number(expense.amount),
       })),
+      refunds: refunds.map((refund) => ({
+        id: refund.id,
+        paidAt: refund.refundPaidAt,
+        invoiceNumber: refund.invoice.sequential,
+        customerName: refund.invoice.customerNameSnapshot,
+        registerName: refund.refundCashRegister?.name ?? '',
+        amount: Number(refund.refundAmount),
+      })),
       storePayments: storePayments.map((payment) => ({
         id: payment.id,
         date: payment.paymentDate,
@@ -208,11 +245,18 @@ export class CashService {
         amount: Number(payment.amount),
       })),
       totals: {
-        expectedCash: sum(closures.map((item) => Number(item.expectedCashTotal))),
+        expectedCash: sum(
+          closures.map((item) => Number(item.expectedCashTotal)),
+        ),
         countedCash: sum(closures.map((item) => Number(item.countedCashTotal))),
-        expectedBank: sum(closures.map((item) => Number(item.expectedBankTotal ?? 0))),
-        countedBank: sum(closures.map((item) => Number(item.countedBankTotal ?? 0))),
+        expectedBank: sum(
+          closures.map((item) => Number(item.expectedBankTotal ?? 0)),
+        ),
+        countedBank: sum(
+          closures.map((item) => Number(item.countedBankTotal ?? 0)),
+        ),
         cashExpenses: sum(cashExpenses.map((item) => Number(item.amount))),
+        refunds: sum(refunds.map((item) => Number(item.refundAmount))),
         storePayments: sum(storePayments.map((item) => Number(item.amount))),
       },
     };
@@ -247,7 +291,10 @@ export class CashService {
     registerId: string,
     transaction?: Prisma.TransactionClient,
   ) {
-    const register = await this.getRegisterWithLatestMoves(registerId, transaction);
+    const register = await this.getRegisterWithLatestMoves(
+      registerId,
+      transaction,
+    );
     const state = this.computeRegisterState(register);
     const latestOpening = register.openings[0] ?? null;
     const latestClosure = register.closures[0] ?? null;
@@ -283,16 +330,24 @@ export class CashService {
     const openingDate = this.normalizeDay(dto.openingDate);
 
     return this.prisma.$transaction(async (transaction) => {
-      const register = await this.getRegisterWithLatestMoves(registerId, transaction);
+      await transaction.$queryRaw`SELECT id FROM cash_registers WHERE id = ${registerId}::uuid FOR UPDATE`;
+      const register = await this.getRegisterWithLatestMoves(
+        registerId,
+        transaction,
+      );
       const state = this.computeRegisterState(register);
 
       if (!register.isActive) {
-        throw new BadRequestException('La caja seleccionada no existe o esta inactiva.');
+        throw new BadRequestException(
+          'La caja seleccionada no existe o esta inactiva.',
+        );
       }
 
       if (state.hasPendingClosure) {
         if (state.isOpenToday) {
-          throw new BadRequestException('La caja ya tiene un turno abierto en este momento.');
+          throw new BadRequestException(
+            'La caja ya tiene un turno abierto en este momento.',
+          );
         }
 
         throw new BadRequestException(
@@ -329,11 +384,19 @@ export class CashService {
 
   async createExpense(registerId: string, dto: CreateCashExpenseDto) {
     return this.prisma.$transaction(async (transaction) => {
-      const register = await this.getRegisterWithLatestMoves(registerId, transaction);
+      await transaction.$queryRaw`SELECT id FROM cash_registers WHERE id = ${registerId}::uuid FOR UPDATE`;
+      const register = await this.getRegisterWithLatestMoves(
+        registerId,
+        transaction,
+      );
       const state = this.computeRegisterState(register);
       const session = this.getLatestSessionWindow(register);
 
-      if (!state.hasPendingClosure || !state.pendingOpeningDate || !session?.isActive) {
+      if (
+        !state.hasPendingClosure ||
+        !state.pendingOpeningDate ||
+        !session?.isActive
+      ) {
         throw new BadRequestException(
           'Debes tener un turno de caja pendiente de cierre para registrar egresos.',
         );
@@ -372,11 +435,19 @@ export class CashService {
     dto: UpdateCashExpenseDto,
   ) {
     return this.prisma.$transaction(async (transaction) => {
-      const register = await this.getRegisterWithLatestMoves(registerId, transaction);
+      await transaction.$queryRaw`SELECT id FROM cash_registers WHERE id = ${registerId}::uuid FOR UPDATE`;
+      const register = await this.getRegisterWithLatestMoves(
+        registerId,
+        transaction,
+      );
       const state = this.computeRegisterState(register);
       const session = this.getLatestSessionWindow(register);
 
-      if (!state.hasPendingClosure || !state.pendingOpeningDate || !session?.isActive) {
+      if (
+        !state.hasPendingClosure ||
+        !state.pendingOpeningDate ||
+        !session?.isActive
+      ) {
         throw new BadRequestException(
           'No existe una jornada activa o pendiente para editar egresos.',
         );
@@ -387,7 +458,9 @@ export class CashService {
       });
 
       if (!expense || expense.cashRegisterId !== registerId) {
-        throw new BadRequestException('El egreso seleccionado no existe para esta caja.');
+        throw new BadRequestException(
+          'El egreso seleccionado no existe para esta caja.',
+        );
       }
 
       if (!this.isExpenseInSession(expense.createdAt, session)) {
@@ -410,11 +483,19 @@ export class CashService {
 
   async deleteExpense(registerId: string, expenseId: string) {
     return this.prisma.$transaction(async (transaction) => {
-      const register = await this.getRegisterWithLatestMoves(registerId, transaction);
+      await transaction.$queryRaw`SELECT id FROM cash_registers WHERE id = ${registerId}::uuid FOR UPDATE`;
+      const register = await this.getRegisterWithLatestMoves(
+        registerId,
+        transaction,
+      );
       const state = this.computeRegisterState(register);
       const session = this.getLatestSessionWindow(register);
 
-      if (!state.hasPendingClosure || !state.pendingOpeningDate || !session?.isActive) {
+      if (
+        !state.hasPendingClosure ||
+        !state.pendingOpeningDate ||
+        !session?.isActive
+      ) {
         throw new BadRequestException(
           'No existe una jornada activa o pendiente para eliminar egresos.',
         );
@@ -425,7 +506,9 @@ export class CashService {
       });
 
       if (!expense || expense.cashRegisterId !== registerId) {
-        throw new BadRequestException('El egreso seleccionado no existe para esta caja.');
+        throw new BadRequestException(
+          'El egreso seleccionado no existe para esta caja.',
+        );
       }
 
       if (!this.isExpenseInSession(expense.createdAt, session)) {
@@ -444,19 +527,35 @@ export class CashService {
 
   async closeRegister(registerId: string, dto: CloseCashRegisterDto) {
     return this.prisma.$transaction(async (transaction) => {
-      const register = await this.getRegisterWithLatestMoves(registerId, transaction);
+      await transaction.$queryRaw`SELECT id FROM cash_registers WHERE id = ${registerId}::uuid FOR UPDATE`;
+      const register = await this.getRegisterWithLatestMoves(
+        registerId,
+        transaction,
+      );
       const state = this.computeRegisterState(register);
       const session = this.getLatestSessionWindow(register);
 
       if (!register.isActive) {
-        throw new BadRequestException('La caja seleccionada no existe o esta inactiva.');
+        throw new BadRequestException(
+          'La caja seleccionada no existe o esta inactiva.',
+        );
       }
 
-      if (!state.hasPendingClosure || !state.pendingOpeningDate || !session?.isActive) {
-        throw new BadRequestException('No existe una caja abierta pendiente de cierre.');
+      if (
+        !state.hasPendingClosure ||
+        !state.pendingOpeningDate ||
+        !session?.isActive
+      ) {
+        throw new BadRequestException(
+          'No existe una caja abierta pendiente de cierre.',
+        );
       }
 
-      const summary = await this.getSessionSummary(registerId, session, transaction);
+      const summary = await this.getSessionSummary(
+        registerId,
+        session,
+        transaction,
+      );
       const expectedCashTotal = Number(summary.expectedCashTotal.toFixed(2));
       const countedCashTotal = Number(dto.countedCashTotal.toFixed(2));
       const countedBankTotal = Number(dto.countedBankTotal.toFixed(2));
@@ -498,6 +597,7 @@ export class CashService {
           expectedCashTotal,
           expectedBankTotal,
           expensesTotal: summary.expensesTotal,
+          refundsTotal: summary.returnsTotal,
           nextDayOpeningAmount,
           nonCashSalesTotal: summary.nonCashSalesTotal,
           notes: dto.notes?.trim() || undefined,
@@ -522,6 +622,7 @@ export class CashService {
             dailyCollectedTotal,
             differenceAmount,
             expensesTotal: summary.expensesTotal,
+            refundsTotal: summary.returnsTotal,
             expectedCashTotal,
             expectedBankTotal,
             nextDayOpeningAmount,
@@ -536,12 +637,22 @@ export class CashService {
     });
   }
 
-  async assertRegisterCanInvoice(registerId: string) {
-    const register = await this.getRegisterWithLatestMoves(registerId);
+  async assertRegisterCanInvoice(
+    registerId: string,
+    transaction?: Prisma.TransactionClient,
+  ) {
+    if (transaction)
+      await transaction.$queryRaw`SELECT id FROM cash_registers WHERE id = ${registerId}::uuid FOR UPDATE`;
+    const register = await this.getRegisterWithLatestMoves(
+      registerId,
+      transaction,
+    );
     const state = this.computeRegisterState(register);
 
     if (!register.isActive) {
-      throw new BadRequestException('La caja seleccionada no existe o esta inactiva.');
+      throw new BadRequestException(
+        'La caja seleccionada no existe o esta inactiva.',
+      );
     }
 
     if (!state.canInvoice) {
@@ -558,7 +669,10 @@ export class CashService {
     registerId: string,
     transaction: Prisma.TransactionClient,
   ) {
-    const register = await this.getRegisterWithLatestMoves(registerId, transaction);
+    const register = await this.getRegisterWithLatestMoves(
+      registerId,
+      transaction,
+    );
     return {
       ...register,
       state: this.computeRegisterState(register),
@@ -591,7 +705,9 @@ export class CashService {
     return register;
   }
 
-  private computeRegisterState(register: CashRegisterWithLatestMoves): RegisterState {
+  private computeRegisterState(
+    register: CashRegisterWithLatestMoves,
+  ): RegisterState {
     const session = this.getLatestSessionWindow(register);
     const latestOpening = session?.opening ?? register.openings[0] ?? null;
     const latestClosure = register.closures[0] ?? null;
@@ -600,10 +716,14 @@ export class CashService {
     const todayKey = this.getCurrentBusinessDayKey();
     const hasPendingClosure = Boolean(session?.isActive);
     const isOpenToday = Boolean(
-      session?.isActive && latestOpeningDate && this.isSameDay(latestOpeningDate, todayKey),
+      session?.isActive &&
+      latestOpeningDate &&
+      this.isSameDay(latestOpeningDate, todayKey),
     );
     const dayClosedToday = Boolean(
-      !hasPendingClosure && latestClosureDate && this.isSameDay(latestClosureDate, todayKey),
+      !hasPendingClosure &&
+      latestClosureDate &&
+      this.isSameDay(latestClosureDate, todayKey),
     );
     const needsOpeningToday = !hasPendingClosure;
     const openingSuggestionAmount = Number(
@@ -643,46 +763,49 @@ export class CashService {
   ): Promise<CashSessionSummary> {
     const client = transaction ?? this.prisma;
     const sessionFilters = this.getSessionRangeSql(session);
-    const [invoiceRows, receivableCollectionRows, expenseRows, returnRows] = await Promise.all([
-      client.$queryRaw<Array<InvoiceSummaryRow>>(Prisma.sql`
+    const [invoiceRows, receivableCollectionRows, expenseRows, returnRows] =
+      await Promise.all([
+        client.$queryRaw<Array<InvoiceSummaryRow>>(Prisma.sql`
         SELECT
-          COALESCE(SUM(CASE WHEN ip.payment_method = 'CASH'::public.payment_method THEN ip.amount ELSE 0 END), 0) AS cash_sales_total,
-          COALESCE(SUM(CASE WHEN ip.payment_method = 'CREDITO_MONSE'::public.payment_method THEN ip.amount ELSE 0 END), 0) AS credit_sales_total,
-          COALESCE(SUM(CASE WHEN ip.payment_method = 'TRANSFER'::public.payment_method THEN ip.amount ELSE 0 END), 0) AS transfer_sales_total,
-          COALESCE(SUM(CASE WHEN ip.payment_method = 'DE_UNA'::public.payment_method THEN ip.amount ELSE 0 END), 0) AS de_una_sales_total,
-          COALESCE(SUM(CASE WHEN ip.payment_method NOT IN ('CASH'::public.payment_method, 'CREDITO_MONSE'::public.payment_method) THEN ip.amount ELSE 0 END), 0) AS non_cash_sales_total
-            FROM public.invoices i
-            INNER JOIN public.invoice_payments ip
+          COALESCE(SUM(CASE WHEN ip.payment_method = 'CASH'::payment_method THEN ip.amount ELSE 0 END), 0) AS cash_sales_total,
+          COALESCE(SUM(CASE WHEN ip.payment_method = 'CREDITO_MONSE'::payment_method THEN ip.amount ELSE 0 END), 0) AS credit_sales_total,
+          COALESCE(SUM(CASE WHEN ip.payment_method = 'TRANSFER'::payment_method THEN ip.amount ELSE 0 END), 0) AS transfer_sales_total,
+          COALESCE(SUM(CASE WHEN ip.payment_method = 'DE_UNA'::payment_method THEN ip.amount ELSE 0 END), 0) AS de_una_sales_total,
+          COALESCE(SUM(CASE WHEN ip.payment_method NOT IN ('CASH'::payment_method, 'CREDITO_MONSE'::payment_method) THEN ip.amount ELSE 0 END), 0) AS non_cash_sales_total
+            FROM invoices i
+            INNER JOIN invoice_payments ip
                     ON ip.invoice_id = i.id
            WHERE i.cash_register_id = ${registerId}::uuid
              ${sessionFilters.invoiceRange}
-             AND i.status <> 'CANCELLED'::public.invoice_status
+             AND i.status <> 'CANCELLED'::invoice_status
       `),
-      client.$queryRaw<Array<ReceivableCollectionSummaryRow>>(Prisma.sql`
+        client.$queryRaw<Array<ReceivableCollectionSummaryRow>>(Prisma.sql`
         SELECT
-          COALESCE(SUM(CASE WHEN payment_method = 'CASH'::public.payment_method THEN amount ELSE 0 END), 0) AS receivable_collections_total
-            FROM public.receivable_payments
+          COALESCE(SUM(CASE WHEN payment_method = 'CASH'::payment_method THEN amount ELSE 0 END), 0) AS receivable_collections_total
+            FROM receivable_payments
            WHERE 1 = 1
              ${sessionFilters.receivableRange}
       `),
-      client.$queryRaw<Array<ExpenseSummaryRow>>(Prisma.sql`
+        client.$queryRaw<Array<ExpenseSummaryRow>>(Prisma.sql`
         SELECT COALESCE(SUM(amount), 0) AS expenses_total
-          FROM public.cash_expenses
+          FROM cash_expenses
          WHERE cash_register_id = ${registerId}::uuid
            ${sessionFilters.expenseRange}
       `),
-      client.$queryRaw<Array<ReturnSummaryRow>>(Prisma.sql`
-        SELECT COALESCE(SUM(refunded_total), 0) AS returns_total
-          FROM public.store_returns
-         WHERE cash_register_id = ${registerId}::uuid
+        client.$queryRaw<Array<ReturnSummaryRow>>(Prisma.sql`
+        SELECT COALESCE(SUM(refund_amount), 0) AS returns_total
+          FROM return_operations
+         WHERE refund_paid_at IS NOT NULL AND refund_cash_register_id = ${registerId}::uuid
            ${sessionFilters.returnRange}
       `),
-    ]);
+      ]);
 
     const openingAmount = Number(session.opening.openingAmount ?? 0);
     const cashSalesTotal = Number(invoiceRows[0]?.cash_sales_total ?? 0);
     const creditSalesTotal = Number(invoiceRows[0]?.credit_sales_total ?? 0);
-    const transferSalesTotal = Number(invoiceRows[0]?.transfer_sales_total ?? 0);
+    const transferSalesTotal = Number(
+      invoiceRows[0]?.transfer_sales_total ?? 0,
+    );
     const deUnaSalesTotal = Number(invoiceRows[0]?.de_una_sales_total ?? 0);
     const nonCashSalesTotal = Number(invoiceRows[0]?.non_cash_sales_total ?? 0);
     const receivableCollectionsTotal = Number(
@@ -729,7 +852,9 @@ export class CashService {
     };
   }
 
-  private getClosedSessionSummary(session: CashSessionWindow): CashSessionSummary {
+  private getClosedSessionSummary(
+    session: CashSessionWindow,
+  ): CashSessionSummary {
     return {
       cashSalesTotal: Number(session.closure?.cashSalesTotal ?? 0),
       creditSalesTotal: Number(session.closure?.creditSalesTotal ?? 0),
@@ -737,14 +862,20 @@ export class CashService {
       expectedCashTotal: Number(session.closure?.expectedCashTotal ?? 0),
       expensesTotal: Number(session.closure?.expensesTotal ?? 0),
       nonCashSalesTotal: Number(session.closure?.nonCashSalesTotal ?? 0),
-      openingAmount: Number(session.closure?.openingAmount ?? session.opening.openingAmount ?? 0),
-      receivableCollectionsTotal: Number(session.closure?.receivableCollectionsTotal ?? 0),
-      returnsTotal: 0,
+      openingAmount: Number(
+        session.closure?.openingAmount ?? session.opening.openingAmount ?? 0,
+      ),
+      receivableCollectionsTotal: Number(
+        session.closure?.receivableCollectionsTotal ?? 0,
+      ),
+      returnsTotal: Number(session.closure?.refundsTotal ?? 0),
       transferSalesTotal: 0,
     };
   }
 
-  private getLatestSessionWindow(register: CashRegisterWithLatestMoves): CashSessionWindow | null {
+  private getLatestSessionWindow(
+    register: CashRegisterWithLatestMoves,
+  ): CashSessionWindow | null {
     const latestOpening = register.openings[0] ?? null;
     const latestClosure = register.closures[0] ?? null;
 
@@ -753,12 +884,13 @@ export class CashService {
     }
 
     const isActive = Boolean(
-      !latestClosure || latestOpening.createdAt.getTime() > latestClosure.createdAt.getTime(),
+      !latestClosure ||
+      latestOpening.createdAt.getTime() > latestClosure.createdAt.getTime(),
     );
 
     return {
       closure: latestClosure,
-      endAt: isActive ? null : latestClosure?.createdAt ?? null,
+      endAt: isActive ? null : (latestClosure?.createdAt ?? null),
       isActive,
       opening: latestOpening,
       operatingDate: latestOpening.openingDate,
@@ -809,13 +941,15 @@ export class CashService {
         ? Prisma.sql`AND paid_at >= ${session.startAt} AND paid_at <= ${session.endAt}`
         : Prisma.sql`AND paid_at >= ${session.startAt}`,
       returnRange: session.endAt
-        ? Prisma.sql`AND created_at >= ${session.startAt} AND created_at <= ${session.endAt}`
-        : Prisma.sql`AND created_at >= ${session.startAt}`,
+        ? Prisma.sql`AND refund_paid_at >= ${session.startAt} AND refund_paid_at <= ${session.endAt}`
+        : Prisma.sql`AND refund_paid_at >= ${session.startAt}`,
     };
   }
 
   private normalizeDay(value?: string | Date) {
-    const dayKey = value ? this.getDateKey(value) : this.getCurrentBusinessDayKey();
+    const dayKey = value
+      ? this.getDateKey(value)
+      : this.getCurrentBusinessDayKey();
     return new Date(`${dayKey}T00:00:00.000Z`);
   }
 
@@ -856,7 +990,9 @@ class CashController {
     @Query() query: CashReportQueryDto,
   ) {
     if (request.user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('Solo el administrador puede consultar este reporte.');
+      throw new ForbiddenException(
+        'Solo el administrador puede consultar este reporte.',
+      );
     }
     return this.cashService.getPeriodReport(query.dateFrom, query.dateTo);
   }
@@ -896,7 +1032,10 @@ class CashController {
   }
 
   @Delete('registers/:id/expenses/:expenseId')
-  deleteExpense(@Param('id') id: string, @Param('expenseId') expenseId: string) {
+  deleteExpense(
+    @Param('id') id: string,
+    @Param('expenseId') expenseId: string,
+  ) {
     return this.cashService.deleteExpense(id, expenseId);
   }
 }
